@@ -4,8 +4,8 @@
 
 ## 运行目录
 
-- 所有脚本在**用户当前项目根目录（cwd）**下运行，产物落在 `<cwd>/bili_temp/<BV_ID>/`。
-- 如需指定其它输出目录：`BILI_OUTPUT_DIR=<目标目录>`，产物落到 `<目标目录>/bili_temp/<BV_ID>/`。
+- 所有脚本在**用户当前项目根目录（cwd）**下运行，产物目录以**视频标题**命名：`<cwd>/bili_temp/<视频标题>/`（标题净化非法字符并截断 80 字符，拿不到标题时回退 BV_ID）。
+- 如需指定其它输出目录：`BILI_OUTPUT_DIR=<目标目录>`，产物落到 `<目标目录>/bili_temp/<视频标题>/`。
 
 ## 1. 主流程：提取官方字幕
 
@@ -37,11 +37,11 @@ python3 <SKILL_DIR>/scripts/bilibili_cheese_downloader.py <SS_ID or EP_ID>
 ```
 - **登录**：脚本生成 `bilibili_login_qr.png`，扫它登录。
 - **SS_ID 模式**（如 `ss123`）：打印课程信息和所有剧集列表，需再用具体 EP_ID 获取字幕。
-- **EP_ID 模式**（如 `ep456`）：下载字幕并切分保存到 `bili_temp/ep456/`，输出 `RESULT_JSON`。
+- **EP_ID 模式**（如 `ep456`）：下载字幕并切分保存到 `bili_temp/<剧集标题>/`，输出 `RESULT_JSON`。
 
 ## 分块文件命名
 
-- 普通视频 (BV号)：`bili_temp/<BV_ID>/<BV_ID>_chunk_0.txt`
+- 普通视频：`bili_temp/<视频标题>/<BV_ID>_chunk_0.txt`
 - 课程剧集 (EP号)：`bili_temp/<EP_ID>/chunk_0.txt`
 
 ## 脚本

@@ -49,7 +49,7 @@ python3 <SKILL_DIR>/scripts/setup_whisper.py [en|zh|all]   # 默认 all
 | **总结稿.md** | 结构化中文总结。脚本先创建占位文件，由总结流程写入正文。 |
 
 - 路径由 `RESULT_JSON` 中的 `deliverables.verbatim` / `deliverables.summary` 给出；`chunks` 仅供内部并行总结使用，不是交付物。
-- 输出目录落在**运行脚本时的 cwd**（`bili_temp/<ID>/` 或 `yt_temp/<ID>/`），不要 `cd` 进 skill 目录运行。
+- 输出目录落在**运行脚本时的 cwd** 下，目录名统一用**视频标题**命名（净化非法字符、截断 80 字符；拿不到标题时回退 ID）：`bili_temp/<视频标题>/` 或 `yt_temp/<视频标题>/`。不要 `cd` 进 skill 目录运行。
 - 脚本路径用 skill base 目录的**绝对路径**：`python3 <SKILL_DIR>/scripts/xxx.py`。
 
 ## 总结稿生成流程（两边统一）

@@ -46,6 +46,15 @@ def sanitize_filename(name):
     return re.sub(r'[\\/:*?"<>|]', '_', name)
 
 
+def output_dir(base, title, video_id):
+    """产物目录统一用「视频标题」命名（净化非法字符、截断到 80 字符）；
+    拿不到标题时回退用 ID。返回已创建的目录。"""
+    name = sanitize_filename((title or '').strip())[:80].strip() or video_id
+    d = os.path.join(base, name)
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
 def ensure_deps():
     """依赖检查：yt-dlp / ffmpeg / mlx-whisper。"""
     ensure_cmd('yt-dlp',

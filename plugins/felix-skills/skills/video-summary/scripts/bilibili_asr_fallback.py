@@ -49,9 +49,8 @@ def write_netscape_cookie():
 
 
 def download_audio(bv_id, p_num=0):
-    """用 yt-dlp 下载音频，返回 (音频路径, 标题)。"""
-    out_dir = os.path.join(resolve_output_base(), bv_id)
-    os.makedirs(out_dir, exist_ok=True)
+    """用 yt-dlp 下载音频，返回 (音频路径, 标题, 产物目录)。"""
+    url = f'https://www.bilibili.com/video/{bv_id}/'
     url = f'https://www.bilibili.com/video/{bv_id}/'
     # 分P视频：yt-dlp 会把多P当作 playlist，用 --playlist-items 选指定的 P
     page_args = ['--playlist-items', str(p_num)] if p_num > 0 else []
@@ -68,9 +67,11 @@ def download_audio(bv_id, p_num=0):
             title = json.loads(info.stdout.strip().splitlines()[-1]).get('title', bv_id)
         except Exception:
             pass
+    # 产物目录以视频标题命名（拿不到标题时回退 BV_ID）
+    out_dir = common.output_dir(resolve_output_base(), title, bv_id)
     safe_title = common.sanitize_filename(title)
 
-    audio_path = os.path.join(out_dir, f'{safe_title}.m4a')
+    audio_path = os.path.join(out_dir, 'audio.m4a')
     if not os.path.exists(audio_path):
         common.run([
             'yt-dlp', '--no-update', *cookie_args,
@@ -78,7 +79,7 @@ def download_audio(bv_id, p_num=0):
             '-o', audio_path,
             *page_args, url
         ], check=True)
-    return audio_path, title
+    return audio_path, title, out_dir
 
 
 def main():
@@ -94,14 +95,13 @@ def main():
 
     # 2. 下载音频
     print(f'[audio] 下载 {bv_id} (P{p_num}) 的音频轨...', flush=True)
-    audio_path, title = download_audio(bv_id, p_num)
+    audio_path, title, out_dir = download_audio(bv_id, p_num)
 
     # 3. 模型
     print('[model] 确认 large-v3 模型...', flush=True)
     common.ensure_model(lang)
 
     # 4. 转写
-    out_dir = os.path.join(resolve_output_base(), bv_id)
     print('[asr] 转写中（首次较慢，之后同语言会快）...', flush=True)
     txt_path = common.transcribe(audio_path, out_dir, lang)
 

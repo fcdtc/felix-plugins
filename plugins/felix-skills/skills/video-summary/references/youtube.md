@@ -32,8 +32,10 @@ python3 <SKILL_DIR>/scripts/youtube_asr_fallback.py <URL或ID> [en|zh]
 
 ## 产物位置
 
-- `yt_temp/<VIDEO_ID>/逐字稿.md` — 完整文字稿（原文语言）
-- `yt_temp/<VIDEO_ID>/总结稿.md` — 中文总结（由总结流程写入）
+目录以**视频标题**命名（净化非法字符并截断 80 字符，拿不到标题时回退视频 ID）：
+
+- `yt_temp/<视频标题>/逐字稿.md` — 完整文字稿（原文语言）
+- `yt_temp/<视频标题>/总结稿.md` — 中文总结（由总结流程写入）
 
 ## 鉴权说明
 

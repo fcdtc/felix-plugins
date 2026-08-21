@@ -52,9 +52,7 @@ def ytdlp_attempts():
     return attempts
 
 
-def download_audio(video_id, url):
-    out_dir = os.path.join(OUTPUT_BASE, video_id)
-    os.makedirs(out_dir, exist_ok=True)
+def download_audio(video_id, url, out_dir):
     audio_path = os.path.join(out_dir, 'audio.m4a')
     if not os.path.exists(audio_path):
         for extra in ytdlp_attempts():
@@ -93,13 +91,15 @@ def main():
         except Exception:
             pass
 
+    # 产物目录以视频标题命名（拿不到标题时回退视频 ID）
+    out_dir = common.output_dir(OUTPUT_BASE, title, video_id)
+
     print(f'[audio] 下载 {video_id} 音频轨...', flush=True)
-    audio_path = download_audio(video_id, url)
+    audio_path = download_audio(video_id, url, out_dir)
 
     print(f'[model] 确认模型（{lang}）...', flush=True)
     common.ensure_model(lang)
 
-    out_dir = os.path.join(OUTPUT_BASE, video_id)
     print('[asr] 转写中...', flush=True)
     txt_path = common.transcribe(audio_path, out_dir, lang)
 

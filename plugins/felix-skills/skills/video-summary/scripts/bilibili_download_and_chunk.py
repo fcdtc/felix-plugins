@@ -6,6 +6,9 @@ import asyncio
 import requests
 from bilibili_api import login_v2, Credential
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import common  # noqa: E402
+
 # Configuration
 COOKIE_FILE = os.path.expanduser('~/.openclaw/workspace/bilibili_cookie.txt')
 CHARS_PER_CHUNK = 100000
@@ -159,9 +162,8 @@ async def main():
         title = info.get('title', bv_id)
         total_chars = len(full_text)
 
-        # Create output dir in workspace using BV_ID
-        output_dir = os.path.join(resolve_output_base(), bv_id)
-        os.makedirs(output_dir, exist_ok=True)
+        # 产物目录以视频标题命名（拿不到标题时回退 BV_ID）
+        output_dir = common.output_dir(resolve_output_base(), title, bv_id)
 
         # 统一交付产物：逐字稿.md（完整文字稿）
         verbatim_md = os.path.join(output_dir, '逐字稿.md')

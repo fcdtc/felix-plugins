@@ -17,6 +17,9 @@ import json
 import shutil
 import subprocess
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import common  # noqa: E402
+
 CHARS_PER_CHUNK = 100000
 OUTPUT_BASE = os.path.join(os.getcwd(), 'yt_temp')
 
@@ -99,7 +102,7 @@ def pick_lang(info):
     return first, False
 
 
-def fetch_subtitle(info, video_id, url, extra_args):
+def fetch_subtitle(info, video_id, url, extra_args, out_dir):
     """下载选定的字幕轨并转纯文本。"""
     picked = pick_lang(info)
     if not picked:
@@ -108,9 +111,6 @@ def fetch_subtitle(info, video_id, url, extra_args):
     lang, is_manual = picked
     kind = '人工字幕' if is_manual else f'自动字幕（原语言 {lang}）'
     print(f'[sub] 选定: {lang} —— {kind}', flush=True)
-
-    out_dir = os.path.join(OUTPUT_BASE, video_id)
-    os.makedirs(out_dir, exist_ok=True)
 
     r = run(ytdlp_base_args() + extra_args + [
         '--skip-download',
@@ -162,14 +162,15 @@ def main():
 
     info, url, extra_args = get_info(video_id)
     title = info.get('title', video_id)
+    # 产物目录以视频标题命名（拿不到标题时回退视频 ID）
+    out_dir = common.output_dir(OUTPUT_BASE, title, video_id)
 
-    full_text = fetch_subtitle(info, video_id, url, extra_args)
+    full_text = fetch_subtitle(info, video_id, url, extra_args, out_dir)
     if not full_text:
         print('ERROR: 没找到字幕（无人工字幕、也无自动字幕），请走 ASR 兜底流程。')
         sys.exit(1)
 
     total = len(full_text)
-    out_dir = os.path.join(OUTPUT_BASE, video_id)
 
     verbatim_md = os.path.join(out_dir, '逐字稿.md')
     with open(verbatim_md, 'w', encoding='utf-8') as f:
