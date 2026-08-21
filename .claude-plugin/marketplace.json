@@ -1,0 +1,13 @@
+{
+	"name": "felix",
+	"owner": {
+		"name": "congfei"
+	},
+	"plugins": [
+		{
+			"name": "felix-skills",
+			"description": "felix 的个人 Claude Code 技能包",
+			"source": "./plugins/felix-skills"
+		}
+	]
+}

@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>eval 评测平台 · 技术汇报</title>
+<link rel="stylesheet" href="../../../assets/fonts.css">
+<link rel="stylesheet" href="../../../assets/base.css">
+<link rel="stylesheet" href="../../../assets/animations/animations.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body class="tpl-tech-sharing">
+<div class="deck">
+
+  <!-- 1. Cover -->
+  <section class="slide" data-title="Cover">
+    <p class="kicker">eval-harness / 2026-07-29</p>
+    <h1 class="h1 anim-fade-up" data-anim="fade-up">复用整个 Runtime<br>给 Skill / Subagent<br><span style="background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent">造一座评测孤岛</span></h1>
+    <p class="lede mt-m">一份代码 · 一个开关 · 生产业务 <span class="mono">0</span> 行删除。</p>
+    <div class="speaker"><div class="av"></div><div><b>work_agent_svr · eval</b><span>feic/feature/eval · 技术汇报</span></div></div>
+    <div class="deck-footer"><span class="mono">#eval #agent #zero-regression</span><span class="slide-number" data-current="1" data-total="11"></span></div>
+    <div class="notes">开场定位：这不是一个能 chat 的 demo，而是一个"配置驱动、即配即测、带可观测"的完整评测闭环。核心理念是复用生产 runtime、隔离命名空间、零回归。</div>
+  </section>
+
+  <!-- 2. Agenda -->
+  <section class="slide" data-title="Agenda">
+    <p class="kicker">agenda</p>
+    <h2 class="h2">今天的路线图</h2>
+    <div class="stack mt-l">
+      <div class="agenda-row"><span class="num">01</span><span class="t">为什么要做：skill/subagent 迁移后的验证痛点</span><span class="d">背景</span></div>
+      <div class="agenda-row"><span class="num">02</span><span class="t">平台有哪些能力：即配即测闭环</span><span class="d">能力</span></div>
+      <div class="agenda-row"><span class="num">03</span><span class="t">亮点 1：零回归隔离架构</span><span class="d">设计</span></div>
+      <div class="agenda-row"><span class="num">04</span><span class="t">亮点 2：Config 层 Overlay 分流</span><span class="d">设计</span></div>
+      <div class="agenda-row"><span class="num">05</span><span class="t">亮点 3：请求级 Agent 切换</span><span class="d">设计</span></div>
+      <div class="agenda-row"><span class="num">06</span><span class="t">验收闭环 + 工程纪律</span><span class="d">收口</span></div>
+    </div>
+    <div class="notes">6 个章节，前两章讲价值和能力，中间三章是技术亮点（核心），最后收口。</div>
+  </section>
+
+  <!-- 3. Why -->
+  <section class="slide" data-title="Why">
+    <p class="kicker">// 痛点</p>
+    <h2 class="h2">Skill / Subagent 改完，<br>到底 work 不 work？</h2>
+    <div class="grid g3 mt-l">
+      <div class="card card-accent"><h4>侵入线上试错</h4><p class="dim">直接在生产环境验证，改动可能影响线上真实用户，风险极高。</p><span class="tag mt-s">❌ 风险高</span></div>
+      <div class="card card-accent"><h4>另起炉灶重写</h4><p class="dim">重写一套测试环境，成本高，且和生产不一致——测了等于白测。</p><span class="tag mt-s">😩 不一致</span></div>
+      <div class="card card-accent"><h4>复用 runtime + 隔离</h4><p class="dim">同一份 binary、同一套 LLM、同一个 runtime，隔离的只是一个开关。</p><span class="tag mt-s">✅ 我们选这个</span></div>
+    </div>
+    <p class="lede mt-l">关键：<span class="mono">评测 = 生产一致性背书</span>。测出来的结果必须可信。</p>
+    <div class="notes">强调"一致性"是核心价值。隔离不是目的，"和生产零差异地测"才是目的。这正是为什么选择复用 runtime 而非重写。</div>
+  </section>
+
+  <!-- 4. Capabilities -->
+  <section class="slide" data-title="Capabilities">
+    <p class="kicker">// 平台能力</p>
+    <h2 class="h2">一个配置驱动的<br>评测闭环。</h2>
+    <div class="grid g2 mt-l">
+      <div class="card card-accent">
+        <h4>对话评测 · Skill · Agent</h4>
+        <div class="stack mt-s" style="font-size:15px;line-height:2;color:var(--text-2)">
+          <div><span style="color:var(--accent)">▸</span> <b style="color:#fff">对话评测</b> — /agui AG-UI SSE 流式，跑通真实 LLM 链路</div>
+          <div><span style="color:var(--accent)">▸</span> <b style="color:#fff">Skill 动态注册</b> — SkillHub CreateSkill，配完立即生效</div>
+          <div><span style="color:var(--accent)">▸</span> <b style="color:#fff">Agent 动态注册/编辑</b> — AgentHub CRUD，改完立即生效，无需发版</div>
+          <div><span style="color:var(--accent)">▸</span> <b style="color:#fff">对话页选 Agent</b> — 一次请求内切换不同 agent 配置</div>
+        </div>
+      </div>
+      <div class="card card-accent">
+        <h4>可观测 + 回看 + 前端</h4>
+        <div class="stack mt-s" style="font-size:15px;line-height:2;color:var(--text-2)">
+          <div><span style="color:var(--accent-2)">▸</span> <b style="color:#fff">全链路可观测</b> — langfuse 自动埋点，agent/model/tool/skill 四层 span</div>
+          <div><span style="color:var(--accent-2)">▸</span> <b style="color:#fff">中间资产回看</b> — GetRunAssets，trace 复盘</div>
+          <div><span style="color:var(--accent-2)">▸</span> <b style="color:#fff">配套前端</b> — evallab_web 线上，Chat/Skills/Agents 全真实接口</div>
+          <div><span style="color:var(--accent-2)">▸</span> <b style="color:#fff">三网关前缀</b> — /evallab · /evallab-skillhub · /evallab-agenthub</div>
+        </div>
+      </div>
+    </div>
+    <div class="notes">让老板 get 的点：不是"能 chat"的 demo，而是配置驱动、即配即测、带可观测的完整闭环——所有改动不经发版，配完即生效。</div>
+  </section>
+
+  <!-- 5. Highlight 1: Zero-regression isolation -->
+  <section class="slide" data-title="Highlight 1">
+    <p class="kicker">亮点 1 · 零回归隔离架构</p>
+    <h2 class="h2">一份代码、一个开关，<br>生产业务 0 行删除。</h2>
+    <div class="grid g2 mt-l" style="align-items:start">
+      <div>
+        <p class="lede">没有 fork 一份代码，没有独立二进制。<span class="mono">EVALSVR=1</span> 环境变量 + 4 层隔离，线上 <span class="mono">main()</span> 一字不变。</p>
+        <div class="terminal mt-m">
+          <div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span>main.go</span></div>
+<pre><span class="kw">if</span> evalEnabled() {
+    config.SetEvalConfigKeysOnly() <span class="cmt">// 配置白名单</span>
+}
+config.InitConfig(<span class="str">"tconf"</span>)
+<span class="kw">if</span> evalEnabled() {
+    runEvalMode(server) <span class="cmt">// 只注册 eval 模块</span>
+    <span class="kw">return</span>
+}
+<span class="cmt">// ↓ 开关关闭，下面线上逻辑一字不变</span>
+workSvrCloseFn := registerService(...)</pre>
+        </div>
+      </div>
+      <div class="stack mt-s">
+        <div class="card card-accent" style="padding:18px"><h4 class="mono" style="color:var(--accent)">① 进程级开关</h4><p class="dim">evalEnabled() 命中走 runEvalMode，只注册 eval 模块</p></div>
+        <div class="card card-accent" style="padding:18px"><h4 class="mono" style="color:var(--accent)">② 配置白名单</h4><p class="dim">SetEvalConfigKeysOnly 跳过框架缺失 key panic</p></div>
+        <div class="card card-accent" style="padding:18px"><h4 class="mono" style="color:var(--accent)">③ 声明式服务路由</h4><p class="dim">trpc_go.yaml 只声明 EvalSvr，未声明自动跳过</p></div>
+        <div class="card card-accent" style="padding:18px"><h4 class="mono" style="color:var(--accent)">④ 独立命名空间</h4><p class="dim">biz=eval · evallab.* · 与线上 worksolo 零共享</p></div>
+      </div>
+    </div>
+    <div class="notes">价值话术：隔离不靠"写两套代码"，靠"开关+命名空间"——线上永远安全，评测随时起。这页是整个平台最硬的技术决策。</div>
+  </section>
+
+  <!-- 6. Highlight 2: Overlay 分流 -->
+  <section class="slide" data-title="Highlight 2">
+    <p class="kicker">亮点 2 · Config 层 Overlay 分流</p>
+    <h2 class="h2">配完即生效，<br>且不碰 runtime 主链路。</h2>
+    <div class="grid g2 mt-l" style="align-items:start">
+      <div>
+        <p class="lede">怎么让 <span class="mono">CreateAgent</span> 写库的配置运行时立刻生效，又不动 <span class="mono">buildAgent</span>？<b style="color:#fff">解法 = 在 config 层分流。</b></p>
+        <div class="stack mt-m">
+          <span class="tag">8 overlay 字段</span>
+          <span class="tag">逐字段判空覆盖</span>
+          <span class="tag">-1 哨兵 = 不覆盖</span>
+          <span class="tag">禁止 import repo (避免 cycle)</span>
+        </div>
+        <p class="dim mt-m" style="font-size:14px">buildAgent 根本不知道 DB 的存在——它只认 config。这就是"最小侵入"的精髓。</p>
+      </div>
+      <div class="terminal">
+        <div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span>config/agent_config.go</span></div>
+<pre><span class="kw">func</span> <span class="fn">GetAgentConfigByLang</span>(ctx, agentID, lang) {
+    <span class="kw">if</span> <span class="fn">evalEnabled</span>() {              <span class="cmt">// 开关</span>
+        <span class="kw">if</span> cfg := <span class="fn">getAgentConfigByLangEval</span>(
+            ctx, agentID, lang); cfg != <span class="kw">nil</span> {
+            <span class="kw">return</span> cfg           <span class="cmt">// DB overlay 命中</span>
+        }
+    }
+    <span class="kw">return</span> <span class="fn">getAgentConfigByLangFromMap</span>(...) <span class="cmt">// 回退</span>
+}
+
+<span class="cmt">// 裸 SQL 直查 + mergeAgentOverlay 逐字段覆盖 yaml</span></pre>
+      </div>
+    </div>
+    <div class="notes">分流点放在 config 层而非 runtime——dynamic.go buildAgent 主流程零改动。8 个字段：system_prompt/tools/model_name/skill_biz/allowed/excluded/force_inject/exclude_system_skill。</div>
+  </section>
+
+  <!-- 7. Highlight 3: Request-level agent -->
+  <section class="slide" data-title="Highlight 3">
+    <p class="kicker">亮点 3 · 请求级 Agent 切换</p>
+    <h2 class="h2">一次对话，<br>动态切换 Agent 配置。</h2>
+    <div class="grid g2 mt-l" style="align-items:start">
+      <div>
+        <p class="lede">DynamicAgent 的 agent_id 构造时写死，AG-UI 请求怎么切换？<b style="color:#fff">请求级覆盖 + 硬门控。</b></p>
+        <div class="stack mt-s" style="font-size:15px;line-height:2;color:var(--text-2)">
+          <div><span style="color:var(--accent)">▸</span> forwardedProps.agent_id → RuntimeState</div>
+          <div><span style="color:var(--accent)">▸</span> effectiveAgentID(ctx) 请求级读取</div>
+          <div><span style="color:var(--accent)">▸</span> 首行硬门控：非 eval 恒 d.agentID</div>
+          <div><span style="color:var(--accent)">▸</span> 仅锁 3 读点：buildAgent/resolveBiz/resolveSkills</div>
+          <div><span style="color:var(--accent)">▸</span> agent 不在 registry → work_agent 兜底 merge</div>
+        </div>
+      </div>
+      <div class="terminal">
+        <div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span>dynamic.go</span></div>
+<pre><span class="kw">func</span> (d *DynamicAgent) <span class="fn">effectiveAgentID</span>(ctx) {
+    <span class="kw">if</span> !config.<span class="fn">EvalEnabled</span>() {
+        <span class="kw">return</span> d.agentID   <span class="cmt">// ← 零回归硬门控</span>
+    }
+    <span class="kw">if</span> reqID, ok := <span class="fn">getRuntimeState</span>(
+        ctx, requestAgentIDKey); ok &amp;&amp; reqID != <span class="str">""</span> {
+        <span class="kw">return</span> reqID        <span class="cmt">// 请求级覆盖</span>
+    }
+    <span class="kw">return</span> d.agentID
+}</pre>
+      </div>
+    </div>
+    <div class="notes">没改 runtime 核心装配逻辑，靠一个 eval 门控方法，把"请求级切换"这种重型能力变成纯增量。单测 4 例固化契约。</div>
+  </section>
+
+  <!-- 8. 部署范式 + 复用 -->
+  <section class="slide" data-title="Deploy & Reuse">
+    <p class="kicker">亮点 4 · 部署范式 + 能力复用</p>
+    <h2 class="h2">踩出来的硬经验，<br>沉淀成可复用范式。</h2>
+    <div class="grid g2 mt-l" style="align-items:start">
+      <div class="card card-accent">
+        <h4>外部可达接口标准范式</h4>
+        <p class="dim mt-s">平台只为 trpc_go.yaml 声明的 tRPC service 分配端口 + 外部映射。裸 net/http / 自建 mux 都拿不到映射。</p>
+        <div class="stack mt-m">
+          <span class="tag">✦ proto 桩方法</span>
+          <span class="tag">✦ trpc_go.yaml 声明 service</span>
+          <span class="tag">✦ registerService + RegisterXxx</span>
+          <span class="tag">✦ service/api/logic 三层</span>
+        </div>
+        <p class="dim mt-s" style="font-size:14px">SkillHub / AgentHub / GetTrace / GetRunAssets 全复用此范式，<b style="color:#fff">新增接口零新增 service/端口</b>。</p>
+      </div>
+      <div class="card card-accent">
+        <h4>横向复用生产 runtime 能力</h4>
+        <p class="dim mt-s">"复用 runtime 不改 runtime"——线上一票横切能力原生复用：</p>
+        <div class="stack mt-m" style="font-size:15px;line-height:2;color:var(--text-2)">
+          <div><span style="color:var(--accent-2)">▸</span> Venus-Session-Id 请求头（会话级缓存/审计）</div>
+          <div><span style="color:var(--accent-2)">▸</span> Anthropic Prompt Cache 4 断点（省 token）</div>
+          <div><span style="color:var(--accent-2)">▸</span> session mysql + 异步摘要器</div>
+          <div><span style="color:var(--accent-2)">▸</span> langfuse 全链路埋点（4 层 span）</div>
+        </div>
+      </div>
+    </div>
+    <div class="notes">这页体现工程沉淀：不只是做出来，还把踩坑经验固化成范式，后续新增能力成本极低。</div>
+  </section>
+
+  <!-- 9. AC 验收 -->
+  <section class="slide" data-title="Acceptance">
+    <p class="kicker">// 验收闭环</p>
+    <h2 class="h2">每个能力，都有<br>可观测的验证路径。</h2>
+    <div class="grid g2 mt-l" style="align-items:start">
+      <div class="terminal">
+        <div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span>verification · logs</span></div>
+<pre><span class="cmt">// AC7 agent 动态注册</span>
+[AgentConfig][EVAL] overlay hit agent=joke_agent
+  fields=system_prompt,tools,model.name
+
+<span class="cmt">// AC8 对话页选 agent</span>
+[AgentConfig][EVAL] overlay using
+  work_agent yaml <span class="kw">as</span> base
+  (agent=joke_agent not in registry)
+
+<span class="cmt">// AC6 skill 动态注册</span>
+resolveSkills ... fetched N enabled
+  skill(s): [...新建的...]</pre>
+      </div>
+      <div class="stack mt-s">
+        <div class="agenda-row" style="padding:10px 0"><span class="num">AC3</span><span class="t" style="font-size:18px">基础 chat</span><span class="d">/agui SSE 通</span></div>
+        <div class="agenda-row" style="padding:10px 0"><span class="num">AC4</span><span class="t" style="font-size:18px">skill 加载</span><span class="d">joke 命中</span></div>
+        <div class="agenda-row" style="padding:10px 0"><span class="num">AC5</span><span class="t" style="font-size:18px">subagent 路由</span><span class="d">screenwriter</span></div>
+        <div class="agenda-row" style="padding:10px 0"><span class="num">AC6</span><span class="t" style="font-size:18px">skill 动态注册</span><span class="d">日志含新建</span></div>
+        <div class="agenda-row" style="padding:10px 0"><span class="num">AC7</span><span class="t" style="font-size:18px">agent 动态注册</span><span class="d">overlay hit</span></div>
+        <div class="agenda-row" style="padding:10px 0"><span class="num">AC8</span><span class="t" style="font-size:18px">对话页选 agent</span><span class="d">work_agent 底</span></div>
+      </div>
+    </div>
+    <div class="notes">每条 AC 都能从日志/响应实证，不是"我觉得 work"。强调可观测、可验证。</div>
+  </section>
+
+  <!-- 10. 工程纪律 -->
+  <section class="slide" data-title="Discipline">
+    <p class="kicker">// 工程纪律</p>
+    <h2 class="h2">三条铁律，<br>贯穿每行改动。</h2>
+    <div class="grid g3 mt-l">
+      <div class="card card-accent"><h4>① 不侵入业务</h4><p class="dim">开关 / 配置 / 嵌入复用，非删改主链路。</p></div>
+      <div class="card card-accent"><h4>② 复用不改 runtime</h4><p class="dim">隔离靠配置 + 命名空间，不靠改 runtime 代码。</p></div>
+      <div class="card card-accent"><h4>③ 独立注册空间</h4><p class="dim">一切 eval / evallab 标识，与线上零共享。</p></div>
+    </div>
+    <div class="card mt-l" style="padding:24px">
+      <p class="lede" style="margin:0"><span class="mono" style="color:var(--accent)">结果 ▸</span> 开关关闭时线上逻辑一字不变，所有 eval 能力都是<b style="color:#fff">纯增量分支</b>——<b style="color:#fff">可灰度、可回退、零风险</b>。</p>
+    </div>
+    <div class="notes">让老板放心：底子干净。每行改动都过自检清单。这是为什么敢上线、敢复用生产 runtime。</div>
+  </section>
+
+  <!-- 11. Summary / Q&A -->
+  <section class="slide center tc" data-title="Summary">
+    <div>
+      <p class="kicker">收口 · 一句话</p>
+      <h2 class="h2" style="font-size:40px;line-height:1.35">用「<span style="color:var(--accent)">一个开关</span> + <span style="color:var(--accent-2)">命名空间隔离</span> + <span style="color:var(--accent-3)">config 层 overlay 分流</span>」</h2>
+      <p class="lede mt-m" style="font-size:24px">把生产级 Agent runtime 完整、零侵入地复用进隔离评测环境——</p>
+      <p class="lede mt-s" style="font-size:24px"><b style="color:#fff">配置即生效 · 改动即可测 · 测了即生产一致</b></p>
+      <div class="row mt-l" style="justify-content:center">
+        <span class="tag">既不背线上风险</span>
+        <span class="tag">也不背维护两套代码</span>
+      </div>
+      <p class="mono mt-l" style="color:var(--accent);font-size:80px;font-weight:800">?</p>
+      <p class="lede">Questions?</p>
+    </div>
+    <div class="deck-footer"><span class="mono">work_agent_svr · feic/feature/eval</span><span class="slide-number" data-current="11" data-total="11"></span></div>
+    <div class="notes">收口：把三大核心设计浓缩成一句话，再强调两个"不背"。这是给老板留下的核心记忆点。</div>
+  </section>
+
+</div>
+<script src="../../../assets/runtime.js"></script>
+</body></html>
