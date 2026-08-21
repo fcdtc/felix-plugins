@@ -17,7 +17,7 @@ felix 的个人 Claude Code 插件市场（marketplace）。
 ## 使用
 
 ```text
-# 添加本市场（本地路径）
+# 添加本市场（GitHub 远端仓库）
 /plugin marketplace add fcdtc/felix-plugins
 
 # 安装技能包
