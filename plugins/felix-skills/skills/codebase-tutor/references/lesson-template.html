@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<!--
+tutor:
+  lesson: 02
+  title: 示例课程标题
+  commit: abc1234            <- 生成时 git rev-parse HEAD
+  files:                     <- 本课依据的文件清单（版本检测用）
+    - src/server.ts
+    - src/router.ts
+-->
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>示例课程标题 · codebase-tutor</title>
+  <link rel="stylesheet" href="../assets/tutor.css">
+</head>
+<body>
+<main class="lesson">
+
+  <!-- 课头：编号 + 标题 + 元信息 -->
+  <header class="tutor-header">
+    <p class="kicker">Lesson 02 · 模块名</p>
+    <h1>示例课程标题</h1>
+    <p class="meta">based on abc1234 · src/server.ts, src/router.ts</p>
+  </header>
+
+  <p class="lead">开场：这一课解决什么问题，学完你能搞明白什么。</p>
+
+  <!-- 普通讲解段落 / 代码块 -->
+  <h2>小节标题</h2>
+  <p>讲解文字。术语首次出现时解释，代码与函数名保留英文。</p>
+  <pre><code><span class="code-comment">// 真实代码原样复制，手工加高亮 span</span>
+<span class="code-fn">handleRequest</span>(req) { ... }</code></pre>
+
+  <!-- 提示框 -->
+  <div class="callout">
+    <p class="callout-title">💡 AHA</p>
+    <p>一个值得记住的洞察。</p>
+  </div>
+
+  <!-- ==================================================
+       组件一：执行步进器（每课 ≥1 个，必须）
+       .stepper-line 每行一个（行号自动生成，注意空行也要占一行）
+       data-steps 的 line 对应第几个 .stepper-line（1 起始）
+       vars 每步给全量快照，与上一步不同的变量自动高亮
+       ================================================== -->
+  <div class="tutor-stepper"
+       data-steps='[
+         {"line": 1, "vars": {"req.method": "GET", "req.path": "/users"}, "note": "请求进入中间件链"},
+         {"line": 3, "vars": {"req.method": "GET", "req.path": "/users", "route": "/users/:id"}, "note": "路由匹配成功"},
+         {"line": 5, "vars": {"ctx.body": "[{id:1}]"}, "note": "handler 执行完毕，响应写回"}
+       ]'>
+    <div class="stepper-title">
+      <span class="src">src/router.ts · matchRoute()</span>
+      <span>执行步进</span>
+    </div>
+    <pre><span class="stepper-line"><span class="code-fn">matchRoute</span>(req) {</span><span class="stepper-line">  <span class="code-keyword">const</span> route = routes.find(r =&gt; r.path === req.path)</span><span class="stepper-line"></span><span class="stepper-line">  <span class="code-keyword">return</span> route</span><span class="stepper-line">}</span></pre>
+    <div class="stepper-panel">
+      <div class="stepper-vars"></div>
+      <p class="stepper-note"></p>
+      <div class="stepper-controls">
+        <button class="stepper-btn" data-action="prev">← 上一步</button>
+        <button class="stepper-btn" data-action="next">下一步 →</button>
+        <span class="pos"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================================================
+       组件五：分层架构图 + 目录树（总览课 index.html 必备，
+       后续课程按需回用；依赖方向向下，入口用 .entry 高亮）
+       ================================================== -->
+  <div class="tutor-arch">
+    <div class="arch-layer">
+      <span class="arch-layer-label">CLI</span>
+      <div class="arch-layer-body">
+        <div class="arch-node entry"><span class="n">bin/cli.js</span><span class="d">命令入口</span></div>
+      </div>
+    </div>
+    <div class="arch-down">↓</div>
+    <div class="arch-layer">
+      <span class="arch-layer-label">Core</span>
+      <div class="arch-layer-body">
+        <div class="arch-node"><span class="n">router/</span><span class="d">路由分发</span></div>
+        <div class="arch-node"><span class="n">render/</span><span class="d">渲染管线</span></div>
+      </div>
+    </div>
+    <div class="arch-down">↓</div>
+    <div class="arch-layer">
+      <span class="arch-layer-label">Infra</span>
+      <div class="arch-layer-body">
+        <div class="arch-node"><span class="n">store/</span><span class="d">状态与持久化</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="dir-tree"><span class="dir">src/</span>
+├── <span class="dir">router/</span>      <span class="cmt"># 路由分发</span>
+├── <span class="dir">render/</span>      <span class="cmt"># 渲染管线</span>
+└── <span class="dir">store/</span>       <span class="cmt"># 状态与持久化</span></div>
+
+  <!-- ==================================================
+       组件二：数据流/消息流动画（按需选用）
+       节点与箭头按出现顺序统一编号（0,1,2,...），
+       data-flow-steps 的 highlight 引用这些下标
+       ================================================== -->
+  <div class="tutor-flow"
+       data-flow-steps='[
+         {"highlight": [0], "desc": "浏览器发起 GET /users/42"},
+         {"highlight": [0, 1, 2], "desc": "请求穿过中间件链到达路由层"},
+         {"highlight": [2, 3, 4], "desc": "handler 查询数据库并组装响应"}
+       ]'>
+    <div class="flow-nodes">
+      <span class="flow-node">Browser</span><span class="flow-arrow">→</span><span class="flow-node">Middleware</span><span class="flow-arrow">→</span><span class="flow-node">Router</span><span class="flow-arrow">→</span><span class="flow-node">DB</span>
+    </div>
+    <p class="flow-step-desc"></p>
+    <div class="flow-controls">
+      <button class="stepper-btn" data-action="prev">← 上一步</button>
+      <button class="stepper-btn" data-action="next">下一步 →</button>
+      <span class="pos"></span>
+    </div>
+  </div>
+
+  <!-- ==================================================
+       组件三：代码 ↔ 英文对照（按需选用）
+       左列真实代码，右列逐段英文原意
+       ================================================== -->
+  <div class="tutor-translate">
+    <div class="code-side"><div class="t">Code</div><pre><code>const hit = cache.get(key)</code></pre></div>
+    <div class="en-side"><div class="t">English</div><p>用 key 作为键，从缓存里取出上次的计算结果。</p></div>
+  </div>
+
+  <!-- ==================================================
+       组件四：预测题（每课结尾 1 道，必须）
+       正确项 data-correct="true"；错误选项按用户易误判的方式构造
+       ================================================== -->
+  <div class="tutor-quiz">
+    <p class="quiz-kicker">预测一下</p>
+    <p class="quiz-question">如果把中间件 A 的注册顺序移到 B 之后，请求处理顺序会怎样？</p>
+    <div class="quiz-options">
+      <button class="quiz-option" data-correct="false">A. 不变，注册顺序无所谓</button>
+      <button class="quiz-option" data-correct="false">B. A 会完全跳过</button>
+      <button class="quiz-option" data-correct="true">C. 变成 B 先执行，A 在响应回程时执行</button>
+    </div>
+    <div class="quiz-feedback">
+      <strong class="verdict"></strong>
+      <span class="why">洋葱模型：注册顺序决定入栈顺序，回程逆序执行 —— 所以 B 先入，A 后出。</span>
+    </div>
+  </div>
+
+  <!-- 页脚：首页 + 上一课 + 下一课 三向导航。
+       下一课链接永远预先建好 —— 按 outline 规划的下一课文件名写死
+       （如 03-router.html），哪怕该课还没生成（点开空白页）。
+       课程生成到那个文件名后，链接自动生效，全链路串联。 -->
+  <footer class="tutor-footer">
+    <span><a href="../index.html">课程首页</a></span>
+    <span>
+      <a href="01-intro.html">← 上一课</a>
+      ·
+      <a href="03-router.html">下一课 →</a>
+    </span>
+  </footer>
+
+</main>
+<script src="../assets/tutor.js"></script>
+</body>
+</html>

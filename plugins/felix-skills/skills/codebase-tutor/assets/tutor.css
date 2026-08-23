@@ -1,0 +1,559 @@
+/* ============================================================
+   codebase-tutor 共享样式表
+   复制到 <repo>/.learn/assets/tutor.css，所有课程共用，勿在课程内重复定义。
+   组件接线方式见 references/lesson-template.html。
+   ============================================================ */
+
+:root {
+  /* 色板：暖色纸感背景 + 单一强调色（可按课替换 --color-accent 系） */
+  --color-bg: #FAF7F2;
+  --color-bg-alt: #FDF9F3;
+  --color-text: #2C2A28;
+  --color-text-secondary: #6B6560;
+  --color-text-muted: #9E9790;
+  --color-border: #E5DFD6;
+  --color-border-light: #EEEBE5;
+  --color-surface: #FFFFFF;
+  --color-accent: #D94F30;          /* vermillion */
+  --color-accent-soft: rgba(217, 79, 48, 0.10);
+  --color-accent-text: #B03A20;
+  --color-correct: #4A9E5C;
+  --color-correct-soft: rgba(74, 158, 92, 0.12);
+  --color-wrong: #C4483A;
+  --color-wrong-soft: rgba(196, 72, 58, 0.10);
+  --color-bg-code: #1E1E2E;
+
+  /* 字体：中文优先，代码等宽 */
+  --font-display: 'Bricolage Grotesque', 'Noto Sans SC', Georgia, serif;
+  --font-body: 'DM Sans', 'Noto Sans SC', -apple-system, 'PingFang SC', sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', Consolas, monospace;
+
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --content-width: 860px;
+  --shadow-sm: 0 1px 3px rgba(44, 42, 40, 0.08);
+  --shadow-md: 0 4px 14px rgba(44, 42, 40, 0.10);
+}
+
+/* ---------- 基础 ---------- */
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-body);
+  font-size: 1rem;
+  line-height: 1.7;
+}
+
+.lesson {
+  max-width: var(--content-width);
+  margin: 0 auto;
+  padding: 3rem 1.5rem 6rem;
+}
+
+h1, h2, h3 {
+  font-family: var(--font-display);
+  line-height: 1.25;
+  color: var(--color-text);
+}
+h1 { font-size: 2.1rem; margin: 0 0 .5rem; }
+h2 { font-size: 1.5rem; margin: 3rem 0 1rem; }
+h3 { font-size: 1.15rem; margin: 2rem 0 .75rem; }
+
+p { color: var(--color-text-secondary); }
+p.lead { font-size: 1.125rem; color: var(--color-text); }
+
+a { color: var(--color-accent-text); }
+
+code {
+  font-family: var(--font-mono);
+  font-size: 0.875em;
+  background: var(--color-accent-soft);
+  padding: .1em .4em;
+  border-radius: 4px;
+}
+
+pre {
+  background: var(--color-bg-code);
+  color: #CDD6F4;
+  border-radius: var(--radius-md);
+  padding: 1.1rem 1.25rem;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  line-height: 1.65;
+  box-shadow: var(--shadow-sm);
+}
+pre code { background: none; padding: 0; font-size: inherit; }
+
+pre, pre code { overflow-wrap: break-word; white-space: pre-wrap; }
+
+/* 代码高亮（agent 手工加 span，色板与 Catppuccin 对齐） */
+.code-fn      { color: #89B4FA; }
+.code-comment { color: #6C7086; }
+.code-number  { color: #FAB387; }
+.code-property{ color: #F9E2AF; }
+.code-operator{ color: #94E2D5; }
+.code-tag     { color: #F38BA8; }
+.code-attr    { color: #F9E2AF; }
+.code-value   { color: #A6E3A1; }
+.code-string  { color: #A6E3A1; }
+
+/* ---------- 顶栏 / 课程元信息 ---------- */
+
+.tutor-header {
+  border-bottom: 1px solid var(--color-border);
+  padding-bottom: 1.25rem;
+  margin-bottom: 2.5rem;
+}
+.tutor-header .kicker {
+  font-family: var(--font-mono);
+  font-size: .75rem;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--color-accent-text);
+  margin: 0 0 .5rem;
+}
+.tutor-header .meta {
+  font-size: .8rem;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  margin-top: .5rem;
+}
+
+/* ---------- 提示框 ---------- */
+
+.callout {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-left: 4px solid var(--color-accent);
+  border-radius: var(--radius-sm);
+  padding: 1rem 1.25rem;
+  margin: 1.5rem 0;
+  box-shadow: var(--shadow-sm);
+}
+.callout > :first-child { margin-top: 0; }
+.callout > :last-child { margin-bottom: 0; }
+.callout .callout-title {
+  font-weight: 700;
+  color: var(--color-accent-text);
+  margin: 0 0 .35rem;
+  font-size: .9rem;
+  letter-spacing: .04em;
+}
+
+/* ============================================================
+   组件一：执行步进器 .tutor-stepper
+   真实代码逐行高亮 + 变量值同步变化。接线见 lesson-template.html。
+   ============================================================ */
+
+.tutor-stepper {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  margin: 2rem 0;
+  overflow: hidden;
+}
+
+.tutor-stepper .stepper-title {
+  font-family: var(--font-mono);
+  font-size: .78rem;
+  color: var(--color-text-muted);
+  padding: .7rem 1.1rem;
+  border-bottom: 1px solid var(--color-border-light);
+  background: var(--color-bg-alt);
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.tutor-stepper .stepper-title .src { color: var(--color-accent-text); }
+
+.tutor-stepper pre {
+  margin: 0;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 1rem 0;
+  counter-reset: stepper-line;
+}
+
+.stepper-line {
+  display: block;
+  padding: 0 1.1rem 0 3.4rem;
+  position: relative;
+  transition: background .18s ease;
+  border-left: 3px solid transparent;
+  min-height: 1.65em;
+}
+.stepper-line::before {
+  counter-increment: stepper-line;
+  content: counter(stepper-line);
+  position: absolute;
+  left: 1.1rem;
+  width: 1.8rem;
+  text-align: right;
+  color: #585B70;
+  font-size: .78rem;
+  user-select: none;
+}
+.stepper-line.active {
+  background: rgba(137, 180, 250, 0.13);
+  border-left-color: #89B4FA;
+}
+.stepper-line.executed { opacity: .62; }
+
+.tutor-stepper .stepper-panel {
+  border-top: 1px solid var(--color-border-light);
+  background: var(--color-bg-alt);
+  padding: .9rem 1.1rem;
+}
+
+.stepper-vars {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .5rem;
+  min-height: 2rem;
+  align-content: center;
+}
+.stepper-var {
+  font-family: var(--font-mono);
+  font-size: .78rem;
+  background: var(--color-bg-code);
+  color: #CDD6F4;
+  border-radius: 6px;
+  padding: .25rem .6rem;
+  animation: var-pop .25s ease;
+}
+.stepper-var .var-name { color: #F9E2AF; }
+.stepper-var .var-value { color: #A6E3A1; }
+.stepper-var.changed { outline: 2px solid #89B4FA; }
+
+.stepper-note {
+  font-size: .88rem;
+  color: var(--color-text-secondary);
+  margin: .6rem 0 0;
+  min-height: 1.2em;
+}
+
+.stepper-controls {
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  margin-top: .8rem;
+}
+.stepper-controls .pos {
+  font-family: var(--font-mono);
+  font-size: .78rem;
+  color: var(--color-text-muted);
+  margin-left: auto;
+}
+.stepper-btn {
+  font-family: var(--font-body);
+  font-size: .85rem;
+  font-weight: 600;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+  border-radius: var(--radius-full, 9999px);
+  padding: .35rem 1.1rem;
+  cursor: pointer;
+  transition: all .15s ease;
+}
+.stepper-btn:hover:not(:disabled) {
+  border-color: var(--color-accent);
+  color: var(--color-accent-text);
+}
+.stepper-btn:disabled { opacity: .35; cursor: default; }
+.stepper-btn.primary {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: #fff;
+}
+.stepper-btn.primary:hover:not(:disabled) { color: #fff; }
+
+@keyframes var-pop {
+  from { transform: scale(.9); opacity: 0; }
+  to   { transform: scale(1); opacity: 1; }
+}
+
+/* ============================================================
+   组件二：预测题 .tutor-quiz（三选一，点击即反馈）
+   ============================================================ */
+
+.tutor-quiz {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  padding: 1.5rem 1.5rem 1.25rem;
+  margin: 3rem 0 1rem;
+}
+.tutor-quiz .quiz-kicker {
+  font-family: var(--font-mono);
+  font-size: .72rem;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--color-accent-text);
+  margin: 0 0 .5rem;
+}
+.tutor-quiz .quiz-question {
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 0 0 1rem;
+}
+.tutor-quiz .quiz-code {
+  font-size: .8rem;
+  margin: 0 0 1rem;
+}
+
+.quiz-options { display: grid; gap: .6rem; }
+.quiz-option {
+  text-align: left;
+  font-family: var(--font-body);
+  font-size: .95rem;
+  line-height: 1.5;
+  border: 1.5px solid var(--color-border);
+  background: var(--color-bg-alt);
+  color: var(--color-text);
+  border-radius: var(--radius-sm);
+  padding: .75rem 1rem;
+  cursor: pointer;
+  transition: all .15s ease;
+}
+.quiz-option:hover:not(:disabled) {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+}
+.quiz-option:disabled { cursor: default; }
+.quiz-option.correct {
+  border-color: var(--color-correct);
+  background: var(--color-correct-soft);
+  font-weight: 600;
+}
+.quiz-option.wrong {
+  border-color: var(--color-wrong);
+  background: var(--color-wrong-soft);
+}
+
+.quiz-feedback {
+  border-radius: var(--radius-sm);
+  padding: .9rem 1.1rem;
+  margin-top: 1rem;
+  font-size: .92rem;
+  display: none;
+}
+.quiz-feedback.show { display: block; animation: var-pop .25s ease; }
+.quiz-feedback.correct { background: var(--color-correct-soft); color: #2E6B3C; }
+.quiz-feedback.wrong   { background: var(--color-wrong-soft);   color: #92352B; }
+.quiz-feedback strong { display: block; margin-bottom: .25rem; }
+
+/* ============================================================
+   组件三：数据流/消息流动画 .tutor-flow
+   ============================================================ */
+
+.tutor-flow {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  padding: 1.5rem;
+  margin: 2rem 0;
+}
+.flow-nodes {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: .25rem;
+  padding: 1rem 0;
+}
+.flow-node {
+  font-family: var(--font-mono);
+  font-size: .8rem;
+  font-weight: 600;
+  border: 2px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-alt);
+  color: var(--color-text-secondary);
+  padding: .6rem 1rem;
+  transition: all .3s ease;
+  position: relative;
+}
+.flow-node.lit {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+  color: var(--color-accent-text);
+  transform: translateY(-3px);
+  box-shadow: var(--shadow-sm);
+}
+.flow-arrow {
+  color: var(--color-text-muted);
+  font-size: 1rem;
+  padding: 0 .35rem;
+  transition: color .3s ease;
+}
+.flow-arrow.lit { color: var(--color-accent); }
+
+.flow-step-desc {
+  min-height: 3.2em;
+  font-size: .92rem;
+  color: var(--color-text-secondary);
+  text-align: center;
+  margin: .75rem 0 0;
+  padding: 0 .5rem;
+}
+.flow-controls {
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  justify-content: center;
+  margin-top: 1rem;
+}
+.flow-controls .pos {
+  font-family: var(--font-mono);
+  font-size: .78rem;
+  color: var(--color-text-muted);
+}
+
+/* ============================================================
+   组件四：代码 ↔ 英文对照块 .tutor-translate
+   ============================================================ */
+
+.tutor-translate {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+  margin: 2rem 0;
+}
+.tutor-translate > div { padding: 1rem 1.25rem; }
+.tutor-translate .t {
+  font-family: var(--font-mono);
+  font-size: .72rem;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  padding: .55rem 1.25rem;
+  border-bottom: 1px solid var(--color-border-light);
+}
+.tutor-translate .code-side {
+  background: var(--color-bg-code);
+  color: #CDD6F4;
+}
+.tutor-translate .code-side .t { color: #89B4FA; background: rgba(0,0,0,.15); }
+.tutor-translate .en-side { background: var(--color-surface); }
+.tutor-translate .en-side .t { color: var(--color-accent-text); background: var(--color-bg-alt); }
+.tutor-translate .code-side code,
+.tutor-translate .code-side pre {
+  background: none; padding: 0; margin: 0; color: inherit; font-size: .82rem; white-space: pre-wrap;
+}
+.tutor-translate .en-side p { margin: 0; font-size: .9rem; }
+
+@media (max-width: 680px) {
+  .tutor-translate { grid-template-columns: 1fr; }
+}
+
+/* ============================================================
+   组件五：分层架构图 .tutor-arch（纯 CSS，第一课总览用）
+   层从上到下排列，层内模块横排，依赖方向默认向下
+   ============================================================ */
+
+.tutor-arch {
+  display: flex;
+  flex-direction: column;
+  gap: .6rem;
+  margin: 2rem 0;
+}
+.arch-layer {
+  display: flex;
+  align-items: stretch;
+  gap: .6rem;
+}
+.arch-layer-label {
+  writing-mode: vertical-lr;
+  text-orientation: mixed;
+  transform: rotate(180deg);
+  font-family: var(--font-mono);
+  font-size: .68rem;
+  letter-spacing: .08em;
+  color: var(--color-text-muted);
+  text-align: center;
+  padding: 0 .15rem;
+  border-left: 2px solid var(--color-border);
+  flex: none;
+}
+.arch-layer-body {
+  flex: 1;
+  display: flex;
+  gap: .6rem;
+  flex-wrap: wrap;
+}
+.arch-node {
+  flex: 1;
+  min-width: 110px;
+  background: var(--color-surface);
+  border: 1.5px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: .6rem .8rem;
+  text-align: center;
+  box-shadow: var(--shadow-sm);
+}
+.arch-node .n {
+  font-family: var(--font-mono);
+  font-size: .8rem;
+  font-weight: 600;
+  color: var(--color-text);
+  display: block;
+}
+.arch-node .d {
+  font-size: .72rem;
+  color: var(--color-text-muted);
+  display: block;
+  margin-top: .15rem;
+}
+.arch-node.entry { border-color: var(--color-accent); background: var(--color-accent-soft); }
+.arch-node.entry .n { color: var(--color-accent-text); }
+.arch-down {
+  text-align: center;
+  color: var(--color-text-muted);
+  font-size: .95rem;
+  line-height: 1;
+  padding: .1rem 0;
+}
+
+/* 目录树 */
+.dir-tree {
+  background: var(--color-bg-code);
+  color: #CDD6F4;
+  border-radius: var(--radius-md);
+  padding: 1.1rem 1.4rem;
+  font-family: var(--font-mono);
+  font-size: .8rem;
+  line-height: 1.7;
+  overflow-x: auto;
+  box-shadow: var(--shadow-sm);
+  white-space: pre;
+}
+.dir-tree .dir { color: #89B4FA; font-weight: 600; }
+.dir-tree .cmt { color: #6C7086; }
+
+/* ---------- 页脚 ---------- */
+
+.tutor-footer {
+  margin-top: 4rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--color-border);
+  font-size: .82rem;
+  color: var(--color-text-muted);
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: .5rem;
+}
