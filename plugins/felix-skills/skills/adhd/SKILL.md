@@ -1,10 +1,10 @@
 ---
-name: i-have-adhd
-description: 'Shape output for a reader with ADHD: lead with the next action, number multi-step work, restate state across turns, suppress tangents, give specific time estimates, make wins visible. Invoke with /i-have-adhd; stays on until "stop adhd mode".'
+name: adhd
+description: 'Shape output for a reader with ADHD: lead with the next action, number multi-step work, restate state across turns, suppress tangents, give specific time estimates, make wins visible. Invoke with /adhd; stays on until "stop adhd mode".'
 disable-model-invocation: true
 ---
 
-# i-have-adhd
+# adhd
 
 The reader has ADHD. Output is not just brief. It is shaped so an ADHD brain can act on it.
 
