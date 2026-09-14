@@ -70,11 +70,12 @@ class TicketLoopPlanTests(unittest.TestCase):
         return json.loads(lines[0])
 
     def assert_rejected(self, result, code):
-        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.returncode, 2, result.stderr)
         payload = self.payload(result)
         self.assertEqual(payload["schema_version"], "1.0")
         self.assertFalse(payload["ok"])
         self.assertEqual(payload["error"]["code"], code)
+        self.assertNotIn("Traceback", result.stderr)
 
     def test_plans_directory_as_frozen_absolute_manifest_and_lowest_frontier(self):
         two = self.write("02-后续 工单.md", task("02", blocked_by="01 / 前置"))
@@ -169,6 +170,9 @@ class TicketLoopPlanTests(unittest.TestCase):
         selected_wayfinder = self.write("01-wayfinder.md", wayfinder("01"))
         result = self.plan("--tickets", selected_wayfinder)
         self.assert_rejected(result, "invalid-task-ticket")
+
+        selected_wayfinder.write_text(wayfinder("01").replace("Type: research", "Type: task"), encoding="utf-8")
+        self.assert_rejected(self.plan("--tickets", selected_wayfinder), "invalid-task-ticket")
 
         selected_wayfinder.write_text("# 01: 缺字段\n\nStatus: ready-for-agent\n", encoding="utf-8")
         result = self.plan("--tickets", selected_wayfinder)

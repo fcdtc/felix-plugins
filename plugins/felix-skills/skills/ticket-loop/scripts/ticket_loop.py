@@ -109,7 +109,7 @@ def parse_ticket(path: Path, *, require_task: bool = False) -> Ticket:
     ticket_type = fields.get("type")
     if ticket_type is not None and ticket_type.lower() not in WAYFINDER_TYPES:
         raise PlanError("invalid-wayfinder-type", f"Wayfinder Ticket 类型无效: {ticket_type} ({path})")
-    kind = "task" if ticket_type is None or ticket_type.lower() == "task" else "wayfinder"
+    kind = "task" if ticket_type is None else "wayfinder"
     if require_task and kind != "task":
         raise PlanError("invalid-task-ticket", f"所选文件是 Wayfinder Ticket: {path}")
 
@@ -319,7 +319,7 @@ def main() -> int:
                 "error": {"code": error.code, "message": str(error)},
             }
         )
-        print(error.message, file=sys.stderr)
+        print(str(error), file=sys.stderr)
         return 2
 
 
