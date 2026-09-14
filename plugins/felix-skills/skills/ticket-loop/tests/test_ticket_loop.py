@@ -261,5 +261,182 @@ class TicketLoopPlanTests(unittest.TestCase):
         self.assert_rejected(self.plan("--tickets", target), "invalid-wayfinder-status")
 
 
+class TicketLoopSingleTicketRunTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name) / "含 空格的仓库"
+        self.issues = self.root / "需求 空间" / "issues"
+        self.issues.mkdir(parents=True)
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True)
+        subprocess.run(["git", "-C", str(self.root), "config", "user.email", "test@example.com"], check=True)
+        subprocess.run(["git", "-C", str(self.root), "config", "user.name", "Test"], check=True)
+        (self.root / "README.md").write_text("fixture\n", encoding="utf-8")
+        self.ticket = self.issues / "02-单工单.md"
+        self.ticket.write_text(task("02", title="单工单"), encoding="utf-8")
+        subprocess.run(["git", "-C", str(self.root), "add", "."], check=True)
+        subprocess.run(["git", "-C", str(self.root), "commit", "-qm", "fixture"], check=True)
+        self.start_head = self.git("rev-parse", "HEAD").strip()
+        self.calls = self.root / ".ticket-loop" / "claude-calls.jsonl"
+        self.fake_claude = Path(self.temp.name) / "fake-claude.py"
+        self.fake_claude.write_text(
+            """#!/usr/bin/env python3
+import json
+from pathlib import Path
+import subprocess
+import sys
+
+args = sys.argv[1:]
+root = Path.cwd()
+with (root / ".ticket-loop" / "claude-calls.jsonl").open("a", encoding="utf-8") as stream:
+    stream.write(json.dumps(args, ensure_ascii=False) + "\\n")
+prompt = args[-1]
+scenario_path = root / ".ticket-loop" / "scenario"
+scenario = scenario_path.read_text(encoding="utf-8").strip() if scenario_path.exists() else "default"
+ticket = root / "需求 空间" / "issues" / "02-单工单.md"
+if prompt.startswith("/implement "):
+    (root / "implementation.txt").write_text("implemented\\n", encoding="utf-8")
+    subprocess.run(["git", "add", "implementation.txt"], check=True)
+    subprocess.run(["git", "commit", "-qm", "feat: implement ticket"], check=True)
+    if scenario == "already-closed":
+        implementation = subprocess.run(["git", "rev-parse", "HEAD"], text=True, capture_output=True, check=True).stdout.strip()
+        text = ticket.read_text(encoding="utf-8")
+        text = text.replace("**Status:** ready-for-agent", f"**Status:** done (2026-09-14, {implementation[:7]})")
+        text = text.replace("- [ ] 验收 单工单", "- [x] 验收 单工单")
+        text += "\\n## Completion evidence\\n\\n- Implementation: implementation commit\\n- Typecheck: Not applicable (pure text fixture)\\n- Tests: fake CLI lifecycle passed\\n- Review: reviewed implementation commit\\n"
+        ticket.write_text(text, encoding="utf-8")
+        subprocess.run(["git", "add", str(ticket)], check=True)
+        subprocess.run(["git", "commit", "-qm", "docs: record ticket completion"], check=True)
+elif scenario != "already-closed":
+    text = ticket.read_text(encoding="utf-8")
+    implementation = subprocess.run(["git", "rev-parse", "HEAD"], text=True, capture_output=True, check=True).stdout.strip()
+    text = text.replace("**Status:** ready-for-agent", f"**Status:** done (2026-09-14, {implementation[:7]})")
+    text = text.replace("- [ ] 验收 单工单", "- [x] 验收 单工单")
+    text += "\\n## Completion evidence\\n\\n- Implementation: implementation commit\\n- Typecheck: Not applicable (pure text fixture)\\n- Tests: fake CLI lifecycle passed\\n"
+    if scenario != "invalid-evidence":
+        text += "- Review: reviewed implementation commit\\n"
+    ticket.write_text(text, encoding="utf-8")
+    subprocess.run(["git", "add", str(ticket)], check=True)
+    subprocess.run(["git", "commit", "-qm", "chore(ticket-loop): close 02"], check=True)
+print(json.dumps({"type": "result", "cost_usd": 0.01}))
+""",
+            encoding="utf-8",
+        )
+        self.fake_claude.chmod(0o755)
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def git(self, *args):
+        return subprocess.run(
+            ["git", "-C", str(self.root), *args],
+            text=True,
+            capture_output=True,
+            check=True,
+        ).stdout
+
+    def cli(self, command, *args):
+        return subprocess.run(
+            [sys.executable, str(CLI), command, *map(str, args)],
+            cwd=self.root,
+            text=True,
+            capture_output=True,
+        )
+
+    def payload(self, result):
+        self.assertEqual(result.stdout.count("\n"), 1, result.stdout)
+        return json.loads(result.stdout)
+
+    def test_runs_implementation_and_closeout_in_the_same_persistent_session(self):
+        started = self.cli(
+            "start",
+            "--tickets",
+            self.ticket,
+            "--claude-executable",
+            self.fake_claude,
+            "--implement-command",
+            "implement",
+        )
+
+        self.assertEqual(started.returncode, 0, started.stderr)
+        start_payload = self.payload(started)
+        self.assertEqual(start_payload["state"], "running")
+        self.assertEqual(start_payload["phase"], "implementation")
+        self.assertEqual(start_payload["allowed_actions"], ["step", "status"])
+        run_id = start_payload["run_id"]
+        session_id = start_payload["session_id"]
+
+        implementation = self.cli("step", "--run", run_id)
+        self.assertEqual(implementation.returncode, 0, implementation.stderr)
+        implementation_payload = self.payload(implementation)
+        self.assertEqual(implementation_payload["phase"], "closeout")
+        self.assertEqual(implementation_payload["state"], "running")
+        self.assertTrue(self.git("merge-base", "--is-ancestor", self.start_head, "HEAD") == "")
+
+        closeout = self.cli("step", "--run", run_id)
+        self.assertEqual(closeout.returncode, 0, closeout.stderr)
+        closeout_payload = self.payload(closeout)
+        self.assertEqual(closeout_payload["state"], "completed")
+        self.assertIsNone(closeout_payload["phase"])
+        self.assertEqual(closeout_payload["allowed_actions"], ["status"])
+        self.assertEqual(self.git("status", "--porcelain=v1", "--untracked-files=all"), "")
+        self.assertEqual(self.git("log", "-1", "--pretty=%s").strip(), "chore(ticket-loop): close 02")
+        self.assertTrue((self.root / ".ticket-loop" / "runs" / f"{run_id}.json").is_file())
+        self.assertIn(".ticket-loop/", (self.root / ".git" / "info" / "exclude").read_text(encoding="utf-8"))
+
+        status = self.cli("status", "--run", run_id)
+        self.assertEqual(status.returncode, 0, status.stderr)
+        self.assertEqual(self.payload(status)["state"], "completed")
+
+        calls = [json.loads(line) for line in self.calls.read_text(encoding="utf-8").splitlines()]
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0][-1], f"/implement @{self.ticket.resolve()}")
+        self.assertIn("--session-id", calls[0])
+        self.assertEqual(calls[0][calls[0].index("--session-id") + 1], session_id)
+        self.assertIn("--resume", calls[1])
+        self.assertEqual(calls[1][calls[1].index("--resume") + 1], session_id)
+        self.assertNotIn("--session-id", calls[1])
+
+    def test_closeout_creates_no_empty_commit_when_implementation_already_closed_ticket(self):
+        started = self.cli(
+            "start",
+            "--tickets",
+            self.ticket,
+            "--claude-executable",
+            self.fake_claude,
+        )
+        run_id = self.payload(started)["run_id"]
+        (self.root / ".ticket-loop" / "scenario").write_text("already-closed", encoding="utf-8")
+
+        implementation = self.cli("step", "--run", run_id)
+        self.assertEqual(implementation.returncode, 0, implementation.stderr)
+        before_closeout = self.git("rev-parse", "HEAD").strip()
+        closeout = self.cli("step", "--run", run_id)
+
+        self.assertEqual(closeout.returncode, 0, closeout.stderr)
+        self.assertEqual(self.git("rev-parse", "HEAD").strip(), before_closeout)
+        self.assertEqual(self.payload(closeout)["state"], "completed")
+
+    def test_closeout_missing_evidence_stays_running_with_a_structured_gate_failure(self):
+        started = self.cli(
+            "start",
+            "--tickets",
+            self.ticket,
+            "--claude-executable",
+            self.fake_claude,
+        )
+        run_id = self.payload(started)["run_id"]
+        (self.root / ".ticket-loop" / "scenario").write_text("invalid-evidence", encoding="utf-8")
+        self.assertEqual(self.cli("step", "--run", run_id).returncode, 0)
+
+        closeout = self.cli("step", "--run", run_id)
+
+        self.assertEqual(closeout.returncode, 2)
+        self.assertEqual(self.payload(closeout)["error"]["code"], "invalid-completion-evidence")
+        status = self.payload(self.cli("status", "--run", run_id))
+        self.assertEqual(status["state"], "running")
+        self.assertEqual(status["phase"], "closeout")
+        self.assertEqual(status["gate_failures"][0]["code"], "invalid-completion-evidence")
+
+
 if __name__ == "__main__":
     unittest.main()

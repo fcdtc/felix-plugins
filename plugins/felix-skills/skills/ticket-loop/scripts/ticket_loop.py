@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
-"""Deterministic, read-only planning for Ticket Loop task manifests."""
+"""Deterministic planning and single-ticket execution for Ticket Loop."""
 
 from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
+from datetime import date, datetime
 import json
+import os
 from pathlib import Path
 import re
+import subprocess
 import sys
 from typing import Iterable
+import uuid
 
 
 SCHEMA_VERSION = "1.0"
@@ -22,6 +26,18 @@ WAYFINDER_TYPES = {"research", "prototype", "grilling", "task"}
 WAYFINDER_STATUSES = {"claimed", "resolved"}
 BLOCKER_RE = re.compile(r"^\s*(\d+)(?:\s*(?:/|[-–—])\s*\S.*)?\s*$")
 DONE_RE = re.compile(r"^done\s*\([^()]+\)$", re.IGNORECASE)
+DONE_DETAILS_RE = re.compile(
+    r"^done\s*\(\s*(\d{4}-\d{2}-\d{2}),\s*([0-9a-fA-F]{7,40})\s*\)$", re.IGNORECASE
+)
+CHECKLIST_RE = re.compile(r"^\s*-\s*\[(?P<mark>[ xX])\]\s+\S", re.MULTILINE)
+EVIDENCE_HEADING_RE = re.compile(r"^##\s+Completion evidence\s*$", re.MULTILINE | re.IGNORECASE)
+EVIDENCE_ITEM_RE = re.compile(
+    r"^\s*-\s*(Implementation|Typecheck|Tests|Review)\s*:\s*(.+?)\s*$",
+    re.MULTILINE | re.IGNORECASE,
+)
+FAILURE_WORD_RE = re.compile(r"\b(fail(?:ed|ure)?|error|broken)\b", re.IGNORECASE)
+NOT_APPLICABLE_RE = re.compile(r"^Not applicable\s*\([^()]+\)$", re.IGNORECASE)
+CLOSEOUT_PROMPT = """Close out the current Task Ticket only. Verify every acceptance checklist item and mark only satisfied items complete. Set Status to done (<today>, <implementation commit>). Add exactly one ## Completion evidence section with non-empty Implementation, Typecheck, Tests, and Review entries; any Not applicable entry must include a reason in parentheses. Commit any remaining closeout changes with message chore(ticket-loop): close <ticket-id>. If no changes remain, do not create an empty commit. Do not amend, rebase, rewrite history, push, create a PR, switch branches, or start another ticket."""
 
 
 class PlanError(Exception):
@@ -286,18 +302,356 @@ def plan_command(args: argparse.Namespace) -> dict[str, object]:
     return build_plan(issues_directory, selected_paths, explicit_selection=bool(args.tickets))
 
 
+def run_git(repository: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+    result = subprocess.run(
+        ["git", "-C", str(repository), *args],
+        text=True,
+        capture_output=True,
+    )
+    if check and result.returncode:
+        raise PlanError("git-command-failed", result.stderr.strip() or "Git 命令失败")
+    return result
+
+
+def repository_identity(cwd: Path) -> tuple[Path, Path, str, str]:
+    root_result = run_git(cwd, "rev-parse", "--show-toplevel", check=False)
+    if root_result.returncode:
+        raise PlanError("not-a-git-repository", "当前目录不在 Git 仓库中")
+    root = Path(root_result.stdout.strip()).resolve()
+    common_raw = run_git(root, "rev-parse", "--git-common-dir").stdout.strip()
+    common = Path(common_raw)
+    if not common.is_absolute():
+        common = (root / common).resolve()
+    branch = run_git(root, "symbolic-ref", "--quiet", "--short", "HEAD", check=False)
+    if branch.returncode or not branch.stdout.strip():
+        raise PlanError("detached-head", "必须在命名分支上启动 Loop Run")
+    head = run_git(root, "rev-parse", "HEAD").stdout.strip()
+    return root, common, branch.stdout.strip(), head
+
+
+def ensure_clean(repository: Path) -> None:
+    status = run_git(repository, "status", "--porcelain=v1", "--untracked-files=all").stdout
+    if status:
+        raise PlanError("dirty-worktree", "工作区、index 或 untracked 文件不干净")
+    git_dir = Path(run_git(repository, "rev-parse", "--git-dir").stdout.strip())
+    if not git_dir.is_absolute():
+        git_dir = repository / git_dir
+    operation_paths = ("MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply")
+    if any((git_dir / name).exists() for name in operation_paths):
+        raise PlanError("git-operation-in-progress", "存在未完成的 Git 操作")
+
+
+def ensure_repository_matches(ledger: dict[str, object]) -> tuple[Path, str]:
+    repository, common, branch, head = repository_identity(Path.cwd())
+    if str(repository) != ledger["repository"] or str(common) != ledger["git_common_directory"]:
+        raise PlanError("repository-drift", "当前 Git 仓库与 Run Ledger 不一致")
+    if branch != ledger["branch"]:
+        raise PlanError("branch-drift", "当前分支与 Run Ledger 不一致")
+    return repository, head
+
+
+def ledger_path(repository: Path, run_id: str) -> Path:
+    return repository / ".ticket-loop" / "runs" / f"{run_id}.json"
+
+
+def write_ledger(path: Path, ledger: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    temporary = path.with_suffix(".json.tmp")
+    temporary.write_text(json.dumps(ledger, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    os.chmod(temporary, 0o600)
+    temporary.replace(path)
+
+
+def load_ledger(run_id: str) -> tuple[Path, dict[str, object]]:
+    repository, _, _, _ = repository_identity(Path.cwd())
+    path = ledger_path(repository, run_id)
+    try:
+        ledger = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as error:
+        raise PlanError("run-not-found", f"Loop Run 不存在: {run_id}") from error
+    except (OSError, json.JSONDecodeError) as error:
+        raise PlanError("invalid-run-ledger", f"无法读取 Run Ledger: {path}") from error
+    if ledger.get("schema_version") != SCHEMA_VERSION or ledger.get("run_id") != run_id:
+        raise PlanError("invalid-run-ledger", f"Run Ledger 不兼容: {path}")
+    return path, ledger
+
+
+def maintain_local_exclude(repository: Path, common: Path) -> None:
+    tracked = run_git(repository, "ls-files", "--error-unmatch", ".ticket-loop", check=False)
+    tracked_children = run_git(repository, "ls-files", ".ticket-loop").stdout.strip()
+    if tracked.returncode == 0 or tracked_children:
+        raise PlanError("tracked-run-directory", ".ticket-loop 已被 Git 跟踪，拒绝占用")
+    exclude = common / "info" / "exclude"
+    exclude.parent.mkdir(parents=True, exist_ok=True)
+    content = exclude.read_text(encoding="utf-8") if exclude.exists() else ""
+    if ".ticket-loop/" not in content.splitlines():
+        separator = "" if not content or content.endswith("\n") else "\n"
+        exclude.write_text(content + separator + ".ticket-loop/\n", encoding="utf-8")
+
+
+def public_run(ledger: dict[str, object], command: str) -> dict[str, object]:
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "ok": True,
+        "command": command,
+        "run_id": ledger["run_id"],
+        "state": ledger["state"],
+        "phase": ledger["phase"],
+        "active_ticket": ledger["active_ticket"],
+        "session_id": ledger["session_id"],
+        "allowed_actions": ["status"] if ledger["state"] == "completed" else ["step", "status"],
+        "git": {
+            "repository": ledger["repository"],
+            "branch": ledger["branch"],
+            "run_start_head": ledger["run_start_head"],
+            "ticket_start_head": ledger["ticket_start_head"],
+            "implementation_head": ledger.get("implementation_head"),
+        },
+        "gate_failures": ledger.get("gate_failures", []),
+    }
+
+
+def start_command(args: argparse.Namespace) -> dict[str, object]:
+    repository, common, branch, head = repository_identity(Path.cwd())
+    ensure_clean(repository)
+    manifest = plan_command(args)
+    if len(manifest["tickets"]) != 1:
+        raise PlanError("single-ticket-required", "本阶段一次 Run 只能包含一张 Task Ticket")
+    ticket = manifest["tickets"][0]
+    if ticket["status"] != "ready-for-agent" or manifest["frontier"] != ticket["id"]:
+        raise PlanError("ticket-not-runnable", "所选工单当前不可执行")
+    ticket_path = Path(ticket["path"])
+    try:
+        ticket_path.relative_to(repository)
+    except ValueError as error:
+        raise PlanError("ticket-outside-repository", "Task Ticket 必须位于当前仓库中") from error
+
+    maintain_local_exclude(repository, common)
+    run_id = str(uuid.uuid4())
+    session_id = str(uuid.uuid4())
+    implement_command = args.implement_command.lstrip("/")
+    if not implement_command or any(character.isspace() for character in implement_command):
+        raise PlanError("invalid-implement-command", "实现命令必须是单个 slash command 名称")
+    closeout_prompt = CLOSEOUT_PROMPT.replace("<today>", date.today().isoformat()).replace(
+        "<ticket-id>", ticket["id"]
+    )
+    ledger: dict[str, object] = {
+        "schema_version": SCHEMA_VERSION,
+        "run_id": run_id,
+        "state": "running",
+        "phase": "implementation",
+        "repository": str(repository),
+        "git_common_directory": str(common),
+        "branch": branch,
+        "run_start_head": head,
+        "ticket_start_head": head,
+        "implementation_head": None,
+        "manifest": manifest,
+        "active_ticket": ticket["id"],
+        "ticket_path": str(ticket_path),
+        "implement_command": implement_command,
+        "implementation_prompt": f"/{implement_command} @{ticket_path}",
+        "closeout_prompt": closeout_prompt,
+        "session_id": session_id,
+        "claude_executable": str(Path(args.claude_executable).expanduser().resolve()) if os.sep in args.claude_executable else args.claude_executable,
+        "model": args.model,
+        "claude_calls": [],
+        "gate_failures": [],
+    }
+    path = ledger_path(repository, run_id)
+    write_ledger(path, ledger)
+    return public_run(ledger, "start")
+
+
+def invoke_claude(ledger: dict[str, object], phase: str, prompt: str) -> dict[str, object]:
+    command = [
+        str(ledger["claude_executable"]),
+        "--print",
+        "--output-format",
+        "json",
+        "--permission-mode",
+        "bypassPermissions",
+        "--dangerously-skip-permissions",
+    ]
+    if ledger.get("model"):
+        command.extend(["--model", str(ledger["model"])])
+    if phase == "implementation":
+        command.extend(["--session-id", str(ledger["session_id"])])
+    else:
+        command.extend(["--resume", str(ledger["session_id"])])
+    command.append(prompt)
+    result = subprocess.run(
+        command,
+        cwd=str(ledger["repository"]),
+        text=True,
+        capture_output=True,
+    )
+    call_number = len(ledger["claude_calls"]) + 1
+    log_path = Path(str(ledger["repository"])) / ".ticket-loop" / "logs" / str(ledger["run_id"])
+    log_path.mkdir(parents=True, exist_ok=True, mode=0o700)
+    raw_path = log_path / f"{call_number:02d}-{phase}.json"
+    raw_path.write_text(result.stdout, encoding="utf-8")
+    os.chmod(raw_path, 0o600)
+    try:
+        parsed = json.loads(result.stdout)
+    except json.JSONDecodeError as error:
+        raise PlanError("invalid-claude-json", f"Claude 未返回有效 JSON；日志: {raw_path}") from error
+    ledger["claude_calls"].append(
+        {"phase": phase, "exit_code": result.returncode, "log_path": str(raw_path), "result": parsed}
+    )
+    if result.returncode:
+        raise PlanError("claude-failed", f"Claude 执行失败，退出码 {result.returncode}；日志: {raw_path}")
+    if parsed.get("is_error") is True or parsed.get("type") == "error" or parsed.get("subtype") == "error":
+        raise PlanError("claude-reported-error", f"Claude JSON 报告执行失败；日志: {raw_path}")
+    return parsed
+
+
+def implementation_gate(ledger: dict[str, object]) -> str:
+    repository = Path(str(ledger["repository"]))
+    _, head = ensure_repository_matches(ledger)
+    start = str(ledger["ticket_start_head"])
+    if head == start:
+        raise PlanError("implementation-no-commit", "Implementation 没有产生新 commit")
+    ancestor = run_git(repository, "merge-base", "--is-ancestor", start, head, check=False)
+    if ancestor.returncode:
+        raise PlanError("history-rewritten", "工单起始 HEAD 不再是当前 HEAD 的祖先")
+    ensure_clean(repository)
+    return head
+
+
+def completion_gate(ledger: dict[str, object]) -> None:
+    repository = Path(str(ledger["repository"]))
+    _, head = ensure_repository_matches(ledger)
+    ensure_clean(repository)
+    implementation_head = str(ledger["implementation_head"])
+    ancestor = run_git(repository, "merge-base", "--is-ancestor", implementation_head, head, check=False)
+    if ancestor.returncode:
+        raise PlanError("history-rewritten", "Implementation HEAD 不再是当前 HEAD 的祖先")
+    if head != implementation_head:
+        commits = run_git(repository, "rev-list", "--reverse", f"{implementation_head}..{head}").stdout.splitlines()
+        expected = f"chore(ticket-loop): close {ledger['active_ticket']}"
+        if len(commits) != 1:
+            raise PlanError("invalid-closeout-commit", "Closeout 最多只能新增一个提交")
+        subject = run_git(repository, "log", "-1", "--pretty=%s", commits[0]).stdout.strip()
+        if subject != expected:
+            raise PlanError("invalid-closeout-commit", f"Closeout commit 信息必须为: {expected}")
+        changed = run_git(
+            repository, "-c", "core.quotepath=false", "diff-tree", "--no-commit-id", "--name-only", "-r", commits[0]
+        ).stdout.splitlines()
+        try:
+            expected_path = str(Path(str(ledger["ticket_path"])).relative_to(repository))
+        except ValueError as error:
+            raise PlanError("ticket-outside-repository", "Task Ticket 必须位于当前仓库中") from error
+        if changed != [expected_path]:
+            raise PlanError("invalid-closeout-changes", "Closeout commit 只能修改当前 Task Ticket")
+    ticket_path = Path(str(ledger["ticket_path"]))
+    ticket = parse_ticket(ticket_path, require_task=True)
+    if not ticket.done:
+        raise PlanError("ticket-not-done", "Closeout 后工单状态不是 done (...)")
+    done_details = DONE_DETAILS_RE.fullmatch(ticket.status)
+    if not done_details:
+        raise PlanError("invalid-done-commit", "done 状态必须包含 ISO 日期和实现 commit")
+    try:
+        datetime.strptime(done_details.group(1), "%Y-%m-%d")
+    except ValueError as error:
+        raise PlanError("invalid-done-commit", "done 状态日期无效") from error
+    referenced_commit = run_git(
+        repository, "rev-parse", "--verify", f"{done_details.group(2)}^{{commit}}", check=False
+    )
+    if referenced_commit.returncode:
+        raise PlanError("invalid-done-commit", "done 状态引用的实现 commit 不存在")
+    referenced_head = referenced_commit.stdout.strip()
+    if referenced_head == str(ledger["ticket_start_head"]):
+        raise PlanError("invalid-done-commit", "done 状态必须引用本次运行产生的实现 commit")
+    if run_git(
+        repository,
+        "merge-base",
+        "--is-ancestor",
+        str(ledger["ticket_start_head"]),
+        referenced_head,
+        check=False,
+    ).returncode or run_git(
+        repository, "merge-base", "--is-ancestor", referenced_head, implementation_head, check=False
+    ).returncode:
+        raise PlanError("invalid-done-commit", "done 状态引用的 commit 不属于本次实现历史")
+    text = ticket_path.read_text(encoding="utf-8")
+    checklist = list(CHECKLIST_RE.finditer(text.split("## Completion evidence", 1)[0]))
+    if not checklist or any(match.group("mark").lower() != "x" for match in checklist):
+        raise PlanError("incomplete-checklist", "工单验收 checklist 尚未全部勾选")
+    if len(EVIDENCE_HEADING_RE.findall(text)) != 1:
+        raise PlanError("invalid-completion-evidence", "必须且只能有一个 Completion evidence 区段")
+    evidence_section = EVIDENCE_HEADING_RE.split(text, maxsplit=1)[1]
+    entries: dict[str, str] = {}
+    for match in EVIDENCE_ITEM_RE.finditer(evidence_section):
+        key, value = match.group(1).lower(), match.group(2).strip()
+        if key in entries:
+            raise PlanError("invalid-completion-evidence", f"Completion evidence 重复: {key}")
+        entries[key] = value
+    required = {"implementation", "typecheck", "tests", "review"}
+    if set(entries) != required or any(not value for value in entries.values()):
+        raise PlanError("invalid-completion-evidence", "Completion evidence 缺少必需的非空条目")
+    for value in entries.values():
+        if value.lower().startswith("not applicable") and not NOT_APPLICABLE_RE.fullmatch(value):
+            raise PlanError("invalid-completion-evidence", "Not applicable 必须包含括号内原因")
+        if FAILURE_WORD_RE.search(value) and not re.search(r"\b(no|not|without)\b", value, re.IGNORECASE):
+            raise PlanError("failed-completion-evidence", "Completion evidence 包含未解释的失败信息")
+
+
+def step_command(args: argparse.Namespace) -> dict[str, object]:
+    path, ledger = load_ledger(args.run)
+    if ledger["state"] == "completed":
+        raise PlanError("run-already-completed", "Loop Run 已完成")
+    ensure_repository_matches(ledger)
+    phase = str(ledger["phase"])
+    prompt = str(ledger[f"{phase}_prompt"])
+    try:
+        invoke_claude(ledger, phase, prompt)
+        if phase == "implementation":
+            ledger["implementation_head"] = implementation_gate(ledger)
+            ledger["phase"] = "closeout"
+        else:
+            completion_gate(ledger)
+            ledger["state"] = "completed"
+            ledger["phase"] = None
+        ledger["gate_failures"] = []
+    except PlanError as error:
+        ledger["gate_failures"] = [{"code": error.code, "message": str(error)}]
+        write_ledger(path, ledger)
+        raise
+    write_ledger(path, ledger)
+    return public_run(ledger, "step")
+
+
+def status_command(args: argparse.Namespace) -> dict[str, object]:
+    _, ledger = load_ledger(args.run)
+    return public_run(ledger, "status")
+
+
 class JsonArgumentParser(argparse.ArgumentParser):
     def error(self, message: str) -> None:
         raise PlanError("invalid-arguments", message)
+
+
+def add_selection_arguments(command: argparse.ArgumentParser) -> None:
+    command.add_argument("--issues-dir")
+    command.add_argument("--range", dest="ticket_range")
+    command.add_argument("--tickets", nargs="+")
 
 
 def parser() -> argparse.ArgumentParser:
     root = JsonArgumentParser(prog="ticket-loop")
     commands = root.add_subparsers(dest="command", required=True)
     plan = commands.add_parser("plan")
-    plan.add_argument("--issues-dir")
-    plan.add_argument("--range", dest="ticket_range")
-    plan.add_argument("--tickets", nargs="+")
+    add_selection_arguments(plan)
+    start = commands.add_parser("start")
+    add_selection_arguments(start)
+    start.add_argument("--claude-executable", default="claude")
+    start.add_argument("--implement-command", default="implement")
+    start.add_argument("--model")
+    step = commands.add_parser("step")
+    step.add_argument("--run", required=True)
+    status = commands.add_parser("status")
+    status.add_argument("--run", required=True)
     return root
 
 
@@ -306,18 +660,28 @@ def emit(payload: dict[str, object]) -> None:
 
 
 def main() -> int:
+    command = "unknown"
     try:
         args = parser().parse_args()
-        if args.command == "plan":
-            emit({"schema_version": SCHEMA_VERSION, "ok": True, "command": "plan", "manifest": plan_command(args)})
-            return 0
-        raise PlanError("unsupported-command", f"不支持的命令: {args.command}")
+        command = args.command
+        if command == "plan":
+            payload = {"schema_version": SCHEMA_VERSION, "ok": True, "command": command, "manifest": plan_command(args)}
+        elif command == "start":
+            payload = start_command(args)
+        elif command == "step":
+            payload = step_command(args)
+        elif command == "status":
+            payload = status_command(args)
+        else:
+            raise PlanError("unsupported-command", f"不支持的命令: {command}")
+        emit(payload)
+        return 0
     except PlanError as error:
         emit(
             {
                 "schema_version": SCHEMA_VERSION,
                 "ok": False,
-                "command": "plan",
+                "command": command,
                 "error": {"code": error.code, "message": str(error)},
             }
         )
