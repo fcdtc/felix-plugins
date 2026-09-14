@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -56,12 +57,13 @@ class TicketLoopPlanTests(unittest.TestCase):
         path.write_text(content, encoding="utf-8")
         return path
 
-    def plan(self, *args):
+    def plan(self, *args, env=None):
         return subprocess.run(
             [sys.executable, str(CLI), "plan", *map(str, args)],
             cwd=self.root,
             text=True,
             capture_output=True,
+            env=env,
         )
 
     def payload(self, result):
@@ -111,6 +113,22 @@ class TicketLoopPlanTests(unittest.TestCase):
         self.assertEqual(payload["manifest"]["frontier"], "01")
         self.assertEqual(before, after)
         self.assertFalse((self.root / ".ticket-loop").exists())
+
+    def test_plan_does_not_invoke_claude(self):
+        ticket = self.write("01-ticket.md", task("01"))
+        fake_bin = self.root / "fake-bin"
+        fake_bin.mkdir()
+        sentinel = self.root / "claude-called"
+        fake_claude = fake_bin / "claude"
+        fake_claude.write_text(f"#!/bin/sh\ntouch '{sentinel}'\nexit 99\n", encoding="utf-8")
+        fake_claude.chmod(0o755)
+        env = os.environ.copy()
+        env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+
+        result = self.plan("--tickets", ticket, env=env)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(sentinel.exists())
 
     def test_range_and_explicit_ticket_selection(self):
         one = self.write("01-one.md", task("01"))
@@ -218,6 +236,12 @@ class TicketLoopPlanTests(unittest.TestCase):
     def test_argument_errors_are_structured_json(self):
         result = self.plan("--unknown")
         self.assert_rejected(result, "invalid-arguments")
+
+    def test_invalid_utf8_is_a_structured_error(self):
+        ticket = self.issues / "01-ticket.md"
+        ticket.write_bytes(b"\xff\xfe")
+
+        self.assert_rejected(self.plan("--tickets", ticket), "invalid-ticket-encoding")
 
     def test_rejects_invalid_filename_and_duplicate_blocked_by_field(self):
         for filename in ("ticket.md", "1-ticket.md", "001-ticket.md", "00-ticket.md"):

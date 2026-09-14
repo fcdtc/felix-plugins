@@ -104,6 +104,8 @@ def parse_ticket(path: Path, *, require_task: bool = False) -> Ticket:
         text = path.read_text(encoding="utf-8")
     except UnicodeError as error:
         raise PlanError("invalid-ticket-encoding", f"工单不是 UTF-8: {path}") from error
+    except OSError as error:
+        raise PlanError("ticket-read-failed", f"无法读取工单: {path}: {error}") from error
 
     fields = extract_fields(text, path)
     ticket_type = fields.get("type")
