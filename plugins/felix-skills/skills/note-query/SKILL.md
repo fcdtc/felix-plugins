@@ -135,7 +135,7 @@ INDEX.md 含五个区，各有用途：
 INDEX.md 由 `note/scripts/build-index.sh` 自动生成。**正常查询不用动它**。仅当怀疑索引过时（比如刚 `/note` 沉淀了新笔记却查不到）时，提示用户重建：
 
 ```bash
-bash /Users/congfei/.claude/skills/note/scripts/update-wiki.sh
+bash ~/.claude/skills/note/scripts/update-wiki.sh
 ```
 
 重建是写操作，归 note skill 管；note-query 只读，不主动跑。

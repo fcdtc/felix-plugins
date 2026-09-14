@@ -23,7 +23,7 @@ disable-model-invocation: true
 ### 1. 结构层（必跑，脚本零成本）
 
 ```bash
-bash /Users/congfei/.claude/skills/note/scripts/lint.sh [vault]
+bash ~/.claude/skills/note/scripts/lint.sh [vault]
 ```
 
 报告七项：frontmatter 缺字段 / 重名冲突 / 死链 / 孤立笔记 / 索引新鲜度 / 多块缺目录 / 矛盾标注现状（信息项）。

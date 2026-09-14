@@ -116,7 +116,7 @@ tags:
 评分由脚本完成（LLM 只负责喂参数、剔误报、写关联说明）：
 
 ```bash
-bash /Users/congfei/.claude/skills/note/scripts/find-related.sh \
+bash ~/.claude/skills/note/scripts/find-related.sh \
   --tags "tag1,tag2" --keywords "词1,词2" [--note 相对路径] [--top N]
 ```
 
@@ -147,7 +147,7 @@ bash /Users/congfei/.claude/skills/note/scripts/find-related.sh \
 笔记写入/规整/重命名后，必须刷新索引层，否则新笔记是孤岛。脚本位于 **note skill 目录下**（非 vault 库内），默认操作 vault 根 `~/basic-memory`，无需 `cd`：
 
 ```bash
-bash /Users/congfei/.claude/skills/note/scripts/update-wiki.sh
+bash ~/.claude/skills/note/scripts/update-wiki.sh
 ```
 
 脚本清单（任一 skill 均可调用，首个可选参数为 vault 根目录）：

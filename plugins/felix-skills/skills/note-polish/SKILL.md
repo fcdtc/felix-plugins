@@ -27,7 +27,7 @@ disable-model-invocation: true
 
 ## 规范来源
 
-标准笔记形状、frontmatter 四字段、标签生成、文件名规则、标题层级、目录（多问题块）、相关笔记搜索 —— 全部见 [`/Users/congfei/.claude/skills/note/vault-conventions.md`](../../skills/note/vault-conventions.md)。改规则只改那一处，本 skill 与 `note` 同步生效。本 skill 只描述「规整」这一条流程上的特殊判定。
+标准笔记形状、frontmatter 四字段、标签生成、文件名规则、标题层级、目录（多问题块）、相关笔记搜索 —— 全部见 [`~/.claude/skills/note/vault-conventions.md`](../../skills/note/vault-conventions.md)。改规则只改那一处，本 skill 与 `note` 同步生效。本 skill 只描述「规整」这一条流程上的特殊判定。
 
 ## Behavior
 
@@ -81,7 +81,7 @@ disable-model-invocation: true
 3. **刷新图谱** — 全部规整后跑一次（让重命名/新关联生效）：
 
    ```bash
-   bash /Users/congfei/.claude/skills/note/scripts/update-wiki.sh
+   bash ~/.claude/skills/note/scripts/update-wiki.sh
    ```
 
    详见 conventions 的「图谱刷新」一节。

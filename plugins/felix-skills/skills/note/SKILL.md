@@ -42,7 +42,7 @@ disable-model-invocation: true
 8. **搜相关笔记（多信号评分）** — 跑 `vault-conventions` 的评分脚本：
 
    ```bash
-   bash /Users/congfei/.claude/skills/note/scripts/find-related.sh \
+   bash ~/.claude/skills/note/scripts/find-related.sh \
      --tags "{tag1,tag2}" --keywords "{步骤 7 的概念}"
    ```
 
@@ -102,7 +102,7 @@ disable-model-invocation: true
 12. **刷新图谱** — 笔记落盘后立刻跑（新笔记才不会是孤岛）：
 
    ```bash
-   bash /Users/congfei/.claude/skills/note/scripts/update-wiki.sh
+   bash ~/.claude/skills/note/scripts/update-wiki.sh
    ```
 
    详见 `vault-conventions` 的「图谱刷新」一节。
