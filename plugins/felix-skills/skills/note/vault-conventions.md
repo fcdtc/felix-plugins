@@ -4,7 +4,7 @@
 
 ## Vault 位置
 
-根目录：`/Users/congfei/basic-memory/`
+根目录：`~/basic-memory/`
 
 目录结构：
 
@@ -144,7 +144,7 @@ bash /Users/congfei/.claude/skills/note/scripts/find-related.sh \
 
 ## 图谱刷新（写后必做）
 
-笔记写入/规整/重命名后，必须刷新索引层，否则新笔记是孤岛。脚本位于 **note skill 目录下**（非 vault 库内），默认操作 vault 根 `/Users/congfei/basic-memory`，无需 `cd`：
+笔记写入/规整/重命名后，必须刷新索引层，否则新笔记是孤岛。脚本位于 **note skill 目录下**（非 vault 库内），默认操作 vault 根 `~/basic-memory`，无需 `cd`：
 
 ```bash
 bash /Users/congfei/.claude/skills/note/scripts/update-wiki.sh

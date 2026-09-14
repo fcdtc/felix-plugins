@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 知识库结构层体检（note-lint skill 的脚本部分）。
 # 用法: bash lint.sh [vault根目录]
-#   不传参时默认 vault 根目录为 /Users/congfei/basic-memory
+#   不传参时默认 vault 根目录为 ~/basic-memory
 #
 # 检查项：frontmatter 缺字段 / 重名冲突 / 死链 / 孤立笔记 / 索引过期 /
 #         多块笔记缺目录 / 矛盾标注现状
@@ -11,7 +11,7 @@
 
 set -u
 
-VAULT="${1:-/Users/congfei/basic-memory}"
+VAULT="${1:-$HOME/basic-memory}"
 cd "$VAULT" || { echo "❌ vault 目录不存在: $VAULT" >&2; exit 1; }
 
 python3 - "$VAULT" <<'PY'

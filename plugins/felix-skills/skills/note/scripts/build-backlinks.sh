@@ -3,10 +3,10 @@
 # 幂等：重复运行会先删除旧的 ## 关联笔记区块再重写，不会累积垃圾。
 # 用法: bash build-backlinks.sh [笔记路径] [vault根目录]
 #   第一个参数（可选）：单篇笔记路径（相对 vault 根或绝对路径），不传则处理全库
-#   第二个参数（可选）：vault 根目录，默认 /Users/congfei/basic-memory
+#   第二个参数（可选）：vault 根目录，默认 ~/basic-memory
 
 set -euo pipefail
-ROOT="${2:-/Users/congfei/basic-memory}"
+ROOT="${2:-$HOME/basic-memory}"
 cd "$ROOT"
 
 MARKER_BEGIN="<!--LLM-BACKLINKS-BEGIN-->"

@@ -7,7 +7,7 @@ disable-model-invocation: true
 
 # Polish Note Skill — 规整 vault 笔记
 
-把 `/Users/congfei/basic-memory/` 中手写的不规范笔记**打磨**为标准格式：修正 frontmatter、统一标题层级、补齐 `## 相关笔记`、按标题重命名文件，最后刷新图谱。
+把 `~/basic-memory/` 中手写的不规范笔记**打磨**为标准格式：修正 frontmatter、统一标题层级、补齐 `## 相关笔记`、按标题重命名文件，最后刷新图谱。
 
 ## Usage
 
@@ -22,7 +22,7 @@ disable-model-invocation: true
 | `/note-polish learning/` | 目录递归 |
 | `/note-polish a.md project/aiinfra/` | 混合，任意个路径 |
 
-- 相对路径以 vault 根 `/Users/congfei/basic-memory/` 为基准
+- 相对路径以 vault 根 `~/basic-memory/` 为基准
 - 目录参数递归展开其下所有 `.md`
 
 ## 规范来源
@@ -32,7 +32,7 @@ disable-model-invocation: true
 ## Behavior
 
 1. **确定范围** —
-   - 无参数：`cd /Users/congfei/basic-memory && git status --porcelain` 取所有状态非 `D` 的 `.md`
+   - 无参数：`cd ~/basic-memory && git status --porcelain` 取所有状态非 `D` 的 `.md`
    - 有参数：文件直接纳入，目录用 `Bash find ... -name '*.md'` 递归展开
    - 去重得待规整列表。为空 → 输出"未发现需要规整的笔记"并结束
 

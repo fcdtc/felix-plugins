@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # 为 Obsidian 知识库生成 LLM 可读的索引层（INDEX.md）。
 # 用法: bash build-index.sh [vault根目录]
-#   不传参时默认 vault 根目录为 /Users/congfei/basic-memory
+#   不传参时默认 vault 根目录为 ~/basic-memory
 #
 # 设计说明：不使用 `{ ... } > file` 命令组重定向（在某些 shell 下会异常截断），
 # 而是用一个全局输出函数 out() 持续追加到一个临时文件，最后原子改名。
 # 也不使用 set -e/pipefail：grep 无匹配、head 关闭管道时返回非零是正常的。
 
-ROOT="${1:-/Users/congfei/basic-memory}"
+ROOT="${1:-$HOME/basic-memory}"
 cd "$ROOT"
 
 TMP=$(mktemp)

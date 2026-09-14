@@ -19,7 +19,7 @@
 
 set -u
 
-VAULT="/Users/congfei/basic-memory"
+VAULT="$HOME/basic-memory"
 TAGS=""
 KEYWORDS=""
 NOTE=""

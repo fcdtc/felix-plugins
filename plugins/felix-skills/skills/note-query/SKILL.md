@@ -7,7 +7,7 @@ disable-model-invocation: true
 
 # Note Query Skill — 查询笔记库
 
-把 `/Users/congfei/basic-memory/` 知识库当一张可查询的图：先吃索引层定位，再按用户意图走两条路。本 skill **只读不写**——不改笔记、不刷新索引。
+把 `~/basic-memory/` 知识库当一张可查询的图：先吃索引层定位，再按用户意图走两条路。本 skill **只读不写**——不改笔记、不刷新索引。
 
 ## 两类查询（先认清用户要什么）
 
@@ -46,7 +46,7 @@ disable-model-invocation: true
 
 **完成标志：拿到一份候选笔记标题清单。**
 
-先 `Read /Users/congfei/basic-memory/INDEX.md`——这是降维优势所在，**它是全库导航层，不要跳过它去裸 grep 全库**（裸 grep 绕过了已建好的摘要/枢纽/标签聚类，既慢又挖不到联系）。
+先 `Read ~/basic-memory/INDEX.md`——这是降维优势所在，**它是全库导航层，不要跳过它去裸 grep 全库**（裸 grep 绕过了已建好的摘要/枢纽/标签聚类，既慢又挖不到联系）。
 
 INDEX.md 含五个区，各有用途：
 
