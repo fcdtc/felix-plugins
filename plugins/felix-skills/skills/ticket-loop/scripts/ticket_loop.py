@@ -28,6 +28,8 @@ TERMINAL_GIT_ERRORS = {
     "run-lock-missing",
     "run-lock-mismatch",
     "recovery-context-drift",
+    "frontier-empty",
+    "external-blocker-modified",
 }
 MAX_PHASE_RESUMES = 2
 DEFAULT_IMPLEMENTATION_TIMEOUT_SECONDS = 90 * 60
@@ -276,6 +278,17 @@ def build_plan(
         ),
         None,
     )
+    external_blockers = {
+        ticket_id: {
+            "id": ticket.ticket_id,
+            "path": str(ticket.path),
+            "kind": ticket.kind,
+            "status": ticket.status,
+            "sha256": hashlib.sha256(ticket.path.read_bytes()).hexdigest(),
+        }
+        for ticket_id, ticket in reachable.items()
+        if ticket_id not in selected
+    }
     return {
         "issues_directory": str(issues_directory.resolve()),
         "tickets": [
@@ -287,6 +300,7 @@ def build_plan(
             }
             for ticket in ordered
         ],
+        "external_blockers": external_blockers,
         "frontier": frontier,
     }
 
@@ -524,30 +538,139 @@ def public_run(ledger: dict[str, object], command: str) -> dict[str, object]:
     }
 
 
+def blocker_satisfied(
+    blocker: str,
+    completed: set[str],
+    external: dict[str, dict[str, object]],
+) -> bool:
+    if blocker in completed:
+        return True
+    dependency = external.get(blocker)
+    if dependency is None:
+        return False
+    if dependency["kind"] == "wayfinder":
+        return str(dependency["status"]).lower() == "resolved"
+    return bool(DONE_RE.fullmatch(str(dependency["status"])))
+
+
+def runnable_ticket(ledger: dict[str, object]) -> dict[str, object] | None:
+    completed = set(ledger.get("completed_tickets", []))
+    external = ledger["manifest"].get("external_blockers", {})
+    return next(
+        (
+            ticket
+            for ticket in ledger["manifest"]["tickets"]
+            if ticket["id"] not in completed
+            and ticket["status"] == "ready-for-agent"
+            and all(blocker_satisfied(blocker, completed, external) for blocker in ticket["blocked_by"])
+        ),
+        None,
+    )
+
+
+def blocked_manifest_details(ledger: dict[str, object]) -> list[dict[str, object]]:
+    completed = set(ledger.get("completed_tickets", []))
+    external = ledger["manifest"].get("external_blockers", {})
+    return [
+        {
+            "ticket": ticket["id"],
+            "unsatisfied_blockers": [
+                blocker
+                for blocker in ticket["blocked_by"]
+                if not blocker_satisfied(blocker, completed, external)
+            ],
+        }
+        for ticket in ledger["manifest"]["tickets"]
+        if ticket["id"] not in completed
+    ]
+
+
+def ensure_external_blockers_unchanged(ledger: dict[str, object]) -> None:
+    for blocker, dependency in ledger["manifest"].get("external_blockers", {}).items():
+        path = Path(str(dependency["path"]))
+        try:
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        except OSError as error:
+            raise PlanError("external-blocker-modified", f"Manifest 外 blocker {blocker} 无法读取") from error
+        repository = Path(str(ledger["repository"]))
+        relative_path = str(path.relative_to(repository))
+        touched_commits = run_git(
+            repository,
+            "rev-list",
+            f"{ledger['run_start_head']}..HEAD",
+            "--",
+            relative_path,
+        ).stdout.splitlines()
+        if digest != dependency["sha256"] or touched_commits:
+            raise PlanError("external-blocker-modified", f"Manifest 外 blocker {blocker} 在运行期间被修改")
+
+
+def activate_ticket(ledger: dict[str, object], ticket: dict[str, object], head: str) -> None:
+    ticket_path = Path(str(ticket["path"]))
+    session_id = str(uuid.uuid4())
+    ledger.update(
+        {
+            "phase": "implementation",
+            "active_ticket": ticket["id"],
+            "ticket_path": str(ticket_path),
+            "ticket_start_head": head,
+            "implementation_head": None,
+            "implementation_prompt": f"/{ledger['implement_command']} @{ticket_path}",
+            "closeout_prompt": CLOSEOUT_PROMPT.replace("<today>", date.today().isoformat()).replace(
+                "<ticket-id>", str(ticket["id"])
+            ),
+            "session_id": session_id,
+            "attempts": {
+                "implementation": {"initial": 0, "resumes": 0},
+                "closeout": {"initial": 0, "resumes": 0},
+            },
+            "recovery": None,
+            "gate_failures": [],
+        }
+    )
+    ledger.setdefault("task_sessions", {})[str(ticket["id"])] = session_id
+
+
+def advance_after_closeout(ledger: dict[str, object], head: str) -> None:
+    completed = ledger.setdefault("completed_tickets", [])
+    completed.append(ledger["active_ticket"])
+    unfinished = [
+        ticket
+        for ticket in ledger["manifest"]["tickets"]
+        if ticket["status"] == "ready-for-agent" and ticket["id"] not in completed
+    ]
+    if not unfinished:
+        ledger["state"] = "completed"
+        ledger["phase"] = None
+        return
+    ticket = runnable_ticket(ledger)
+    if ticket is None:
+        details = blocked_manifest_details(ledger)
+        ledger["active_ticket"] = None
+        ledger["phase"] = None
+        raise PlanError(
+            "frontier-empty",
+            "Manifest 仍有未完成工单，但没有满足依赖的可执行 Frontier: "
+            + json.dumps(details, ensure_ascii=False, separators=(",", ":")),
+        )
+    activate_ticket(ledger, ticket, head)
+
+
 def start_command(args: argparse.Namespace) -> dict[str, object]:
     repository, common, branch, head = repository_identity(Path.cwd())
     ensure_clean(repository)
     manifest = plan_command(args)
-    if len(manifest["tickets"]) != 1:
-        raise PlanError("single-ticket-required", "本阶段一次 Run 只能包含一张 Task Ticket")
-    ticket = manifest["tickets"][0]
-    if ticket["status"] != "ready-for-agent" or manifest["frontier"] != ticket["id"]:
-        raise PlanError("ticket-not-runnable", "所选工单当前不可执行")
-    ticket_path = Path(ticket["path"])
-    try:
-        ticket_path.relative_to(repository)
-    except ValueError as error:
-        raise PlanError("ticket-outside-repository", "Task Ticket 必须位于当前仓库中") from error
+    for ticket in manifest["tickets"]:
+        try:
+            Path(str(ticket["path"])).relative_to(repository)
+        except ValueError as error:
+            raise PlanError("ticket-outside-repository", "Task Ticket 必须位于当前仓库中") from error
 
     maintain_local_exclude(repository, common)
     run_id = str(uuid.uuid4())
-    session_id = str(uuid.uuid4())
     implement_command = args.implement_command.lstrip("/")
     if not implement_command or any(character.isspace() for character in implement_command):
         raise PlanError("invalid-implement-command", "实现命令必须是单个 slash command 名称")
-    closeout_prompt = CLOSEOUT_PROMPT.replace("<today>", date.today().isoformat()).replace(
-        "<ticket-id>", ticket["id"]
-    )
     ledger: dict[str, object] = {
         "schema_version": SCHEMA_VERSION,
         "run_id": run_id,
@@ -557,15 +680,21 @@ def start_command(args: argparse.Namespace) -> dict[str, object]:
         "git_common_directory": str(common),
         "branch": branch,
         "run_start_head": head,
-        "ticket_start_head": head,
+        "ticket_start_head": None,
         "implementation_head": None,
         "manifest": manifest,
-        "active_ticket": ticket["id"],
-        "ticket_path": str(ticket_path),
+        "completed_tickets": [
+            ticket["id"]
+            for ticket in manifest["tickets"]
+            if DONE_RE.fullmatch(str(ticket["status"]))
+        ],
+        "task_sessions": {},
+        "active_ticket": None,
+        "ticket_path": None,
         "implement_command": implement_command,
-        "implementation_prompt": f"/{implement_command} @{ticket_path}",
-        "closeout_prompt": closeout_prompt,
-        "session_id": session_id,
+        "implementation_prompt": None,
+        "closeout_prompt": None,
+        "session_id": None,
         "claude_executable": str(Path(args.claude_executable).expanduser().resolve()) if os.sep in args.claude_executable else args.claude_executable,
         "model": args.model,
         "timeouts": {
@@ -581,6 +710,14 @@ def start_command(args: argparse.Namespace) -> dict[str, object]:
         "claude_calls": [],
         "gate_failures": [],
     }
+    first_ticket = runnable_ticket(ledger)
+    if first_ticket is None:
+        raise PlanError(
+            "frontier-empty",
+            "Manifest 当前没有满足依赖的可执行 Frontier: "
+            + json.dumps(blocked_manifest_details(ledger), ensure_ascii=False, separators=(",", ":")),
+        )
+    activate_ticket(ledger, first_ticket, head)
     acquire_run_lock(
         common,
         {
@@ -897,6 +1034,7 @@ def invoke_phase(args: argparse.Namespace, *, resume: bool) -> dict[str, object]
         except PlanError as error:
             claude_error = error
         _, head = runtime_git_gate(ledger)
+        ensure_external_blockers_unchanged(ledger)
         if claude_error:
             raise claude_error
         if phase == "implementation":
@@ -904,8 +1042,7 @@ def invoke_phase(args: argparse.Namespace, *, resume: bool) -> dict[str, object]
             ledger["phase"] = "closeout"
         else:
             completion_gate(ledger, head)
-            ledger["state"] = "completed"
-            ledger["phase"] = None
+            advance_after_closeout(ledger, head)
         ledger["recovery"] = None
         ledger["gate_failures"] = []
     except PlanError as error:

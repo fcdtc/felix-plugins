@@ -928,5 +928,237 @@ print(json.dumps({"type": "result", "cost_usd": 0.01}))
         self.assertEqual(status["gate_failures"][0]["code"], "invalid-completion-evidence")
 
 
+class TicketLoopManifestRunTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name) / "manifest repo"
+        self.issues = self.root / "issues"
+        self.issues.mkdir(parents=True)
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True)
+        subprocess.run(["git", "-C", str(self.root), "config", "user.email", "test@example.com"], check=True)
+        subprocess.run(["git", "-C", str(self.root), "config", "user.name", "Test"], check=True)
+        (self.root / "README.md").write_text("fixture\n", encoding="utf-8")
+        self.fake_claude = Path(self.temp.name) / "manifest-claude.py"
+        self.fake_claude.write_text(
+            '''#!/usr/bin/env python3
+import json
+from pathlib import Path
+import re
+import subprocess
+import sys
+
+args = sys.argv[1:]
+root = Path.cwd()
+session_flag = "--resume" if "--resume" in args else "--session-id"
+session_id = args[args.index(session_flag) + 1]
+prompt = args[-1]
+sessions_path = root / ".ticket-loop" / "fake-sessions.json"
+sessions = json.loads(sessions_path.read_text(encoding="utf-8")) if sessions_path.exists() else {}
+if prompt.startswith("/"):
+    ticket = Path(prompt.split(" @", 1)[1])
+    sessions[session_id] = str(ticket)
+    sessions_path.write_text(json.dumps(sessions), encoding="utf-8")
+    phase = "implementation"
+else:
+    ticket = Path(sessions[session_id])
+    phase = "implementation" if "阶段: implementation" in prompt else "closeout"
+ticket_id = ticket.name.split("-", 1)[0]
+calls_path = root / ".ticket-loop" / "manifest-calls.jsonl"
+with calls_path.open("a", encoding="utf-8") as stream:
+    stream.write(json.dumps({"args": args, "ticket": ticket_id, "phase": phase}) + "\\n")
+scenario_path = root / ".ticket-loop" / "manifest-scenario.json"
+scenarios = json.loads(scenario_path.read_text(encoding="utf-8")) if scenario_path.exists() else {}
+scenario = scenarios.get(ticket_id, "success")
+if scenario == "always-error" and phase == "implementation":
+    print(json.dumps({"type": "error"}))
+    raise SystemExit(0)
+if phase == "implementation":
+    implementation = root / f"implementation-{ticket_id}.txt"
+    implementation.write_text(f"implemented {ticket_id}\\n", encoding="utf-8")
+    subprocess.run(["git", "add", str(implementation)], check=True)
+    if scenario == "add-ticket":
+        added = ticket.parent / "03-added-during-run.md"
+        added.write_text("# 03: 新增\\n\\n**What to build:** 不应执行\\n\\n**Blocked by:** None\\n\\n**Status:** ready-for-agent\\n\\n- [ ] 验收新增\\n", encoding="utf-8")
+        subprocess.run(["git", "add", str(added)], check=True)
+    if scenario == "modify-external":
+        external = ticket.parent / "01-external.md"
+        external.write_text(external.read_text(encoding="utf-8") + "\\nmodified\\n", encoding="utf-8")
+        subprocess.run(["git", "add", str(external)], check=True)
+    subprocess.run(["git", "commit", "-qm", f"feat: implement {ticket_id}"], check=True)
+else:
+    implementation = subprocess.run(["git", "rev-parse", "HEAD"], text=True, capture_output=True, check=True).stdout.strip()
+    text = ticket.read_text(encoding="utf-8")
+    text = text.replace("**Status:** ready-for-agent", f"**Status:** done (2026-09-15, {implementation[:7]})")
+    text = re.sub(r"^- \\[ \\]", "- [x]", text, flags=re.MULTILINE)
+    text += "\\n## Completion evidence\\n\\n- Implementation: implementation commit\\n- Typecheck: Not applicable (fixture)\\n- Tests: lifecycle passed\\n- Review: reviewed\\n"
+    ticket.write_text(text, encoding="utf-8")
+    subprocess.run(["git", "add", str(ticket)], check=True)
+    subprocess.run(["git", "commit", "-qm", f"chore(ticket-loop): close {ticket_id}"], check=True)
+print(json.dumps({"type": "result", "cost_usd": 0.01}))
+''',
+            encoding="utf-8",
+        )
+        self.fake_claude.chmod(0o755)
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def write_ticket(self, number, *, blocked_by="None", status="ready-for-agent", title=None):
+        path = self.issues / f"{number}-{title or number}.md"
+        path.write_text(task(number, status=status, blocked_by=blocked_by, title=title or number), encoding="utf-8")
+        return path
+
+    def commit_fixture(self):
+        subprocess.run(["git", "-C", str(self.root), "add", "."], check=True)
+        subprocess.run(["git", "-C", str(self.root), "commit", "-qm", "fixture"], check=True)
+
+    def cli(self, command, *args):
+        return subprocess.run(
+            [sys.executable, str(CLI), command, *map(str, args)],
+            cwd=self.root,
+            text=True,
+            capture_output=True,
+        )
+
+    def payload(self, result):
+        self.assertEqual(result.stdout.count("\n"), 1, result.stdout)
+        return json.loads(result.stdout)
+
+    def start(self, *tickets):
+        return self.cli(
+            "start",
+            "--tickets",
+            *tickets,
+            "--claude-executable",
+            self.fake_claude,
+        )
+
+    def calls(self):
+        path = self.root / ".ticket-loop" / "manifest-calls.jsonl"
+        return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()] if path.exists() else []
+
+    def run_to_end(self, run_id):
+        while True:
+            status = self.payload(self.cli("status", "--run", run_id))
+            if status["state"] != "running":
+                return status
+            action = status["allowed_actions"][0]
+            result = self.cli(action, "--run", run_id)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_runs_linear_chain_with_a_fresh_session_per_ticket(self):
+        one = self.write_ticket("01")
+        two = self.write_ticket("02", blocked_by="01")
+        self.commit_fixture()
+
+        started = self.start(two, one)
+        self.assertEqual(started.returncode, 0, started.stderr)
+        run_id = self.payload(started)["run_id"]
+        final = self.run_to_end(run_id)
+
+        self.assertEqual(final["state"], "completed")
+        calls = self.calls()
+        self.assertEqual([(call["ticket"], call["phase"]) for call in calls], [
+            ("01", "implementation"), ("01", "closeout"),
+            ("02", "implementation"), ("02", "closeout"),
+        ])
+        session_ids = [call["args"][call["args"].index("--session-id") + 1] for call in calls if "--session-id" in call["args"]]
+        self.assertEqual(len(session_ids), 2)
+        self.assertNotEqual(session_ids[0], session_ids[1])
+        self.assertEqual(subprocess.run(["git", "-C", str(self.root), "status", "--porcelain=v1", "--untracked-files=all"], text=True, capture_output=True, check=True).stdout, "")
+
+    def test_manifest_done_ticket_satisfies_a_ready_ticket_dependency(self):
+        one = self.write_ticket("01", status="done (2026-09-14, abc1234)")
+        two = self.write_ticket("02", blocked_by="01")
+        self.commit_fixture()
+
+        started = self.start(one, two)
+        self.assertEqual(started.returncode, 0, started.stderr)
+        run_id = self.payload(started)["run_id"]
+        final = self.run_to_end(run_id)
+
+        self.assertEqual(final["state"], "completed")
+        self.assertEqual([call["ticket"] for call in self.calls() if call["phase"] == "implementation"], ["02"])
+
+    def test_forked_dag_always_chooses_the_lowest_frontier(self):
+        one = self.write_ticket("01")
+        two = self.write_ticket("02", blocked_by="01")
+        four = self.write_ticket("04", blocked_by="02")
+        five = self.write_ticket("05", blocked_by="01")
+        self.commit_fixture()
+
+        run_id = self.payload(self.start(five, four, two, one))["run_id"]
+        final = self.run_to_end(run_id)
+
+        self.assertEqual(final["state"], "completed")
+        self.assertEqual([call["ticket"] for call in self.calls() if call["phase"] == "implementation"], ["01", "02", "04", "05"])
+
+    def test_external_blocker_is_never_executed_and_empty_frontier_stops_run(self):
+        external = self.write_ticket("01")
+        two = self.write_ticket("02")
+        three = self.write_ticket("03", blocked_by="01")
+        self.commit_fixture()
+        original = external.read_text(encoding="utf-8")
+
+        run_id = self.payload(self.start(two, three))["run_id"]
+        self.assertEqual(self.cli("step", "--run", run_id).returncode, 0)
+        blocked = self.cli("step", "--run", run_id)
+
+        self.assertEqual(blocked.returncode, 2)
+        self.assertEqual(self.payload(blocked)["error"]["code"], "frontier-empty")
+        status = self.payload(self.cli("status", "--run", run_id))
+        self.assertEqual(status["state"], "terminal-failure")
+        self.assertEqual([call["ticket"] for call in self.calls()], ["02", "02"])
+        self.assertEqual(external.read_text(encoding="utf-8"), original)
+
+    def test_modifying_an_external_blocker_is_a_terminal_failure(self):
+        external = self.write_ticket("01", status="done (2026-09-14, abc1234)", title="external")
+        target = self.write_ticket("02", blocked_by="01")
+        self.commit_fixture()
+
+        started = self.start(target)
+        run_id = self.payload(started)["run_id"]
+        (self.root / ".ticket-loop" / "manifest-scenario.json").write_text(json.dumps({"02": "modify-external"}), encoding="utf-8")
+        failed = self.cli("step", "--run", run_id)
+
+        self.assertEqual(failed.returncode, 2)
+        self.assertEqual(self.payload(failed)["error"]["code"], "external-blocker-modified")
+        self.assertEqual(self.payload(self.cli("status", "--run", run_id))["state"], "terminal-failure")
+        self.assertNotIn("done (2026-09-15", target.read_text(encoding="utf-8"))
+        self.assertIn("modified", external.read_text(encoding="utf-8"))
+
+    def test_ticket_added_during_run_is_not_absorbed_into_frozen_manifest(self):
+        one = self.write_ticket("01")
+        two = self.write_ticket("02", blocked_by="01")
+        self.commit_fixture()
+        scenario = self.root / ".ticket-loop" / "manifest-scenario.json"
+
+        started = self.start(one, two)
+        run_id = self.payload(started)["run_id"]
+        scenario.write_text(json.dumps({"01": "add-ticket"}), encoding="utf-8")
+        final = self.run_to_end(run_id)
+
+        self.assertEqual(final["state"], "completed")
+        self.assertEqual([call["ticket"] for call in self.calls() if call["phase"] == "implementation"], ["01", "02"])
+        self.assertIn("ready-for-agent", (self.issues / "03-added-during-run.md").read_text(encoding="utf-8"))
+
+    def test_terminal_failure_on_current_ticket_never_starts_the_next_ticket(self):
+        one = self.write_ticket("01")
+        two = self.write_ticket("02", blocked_by="01")
+        self.commit_fixture()
+
+        started = self.start(one, two)
+        run_id = self.payload(started)["run_id"]
+        (self.root / ".ticket-loop" / "manifest-scenario.json").write_text(json.dumps({"01": "always-error"}), encoding="utf-8")
+        for _ in range(3):
+            result = self.cli("step" if not self.calls() else "resume", "--run", run_id)
+            self.assertEqual(result.returncode, 2)
+
+        status = self.payload(self.cli("status", "--run", run_id))
+        self.assertEqual(status["state"], "terminal-failure")
+        self.assertEqual(status["active_ticket"], "01")
+        self.assertEqual({call["ticket"] for call in self.calls()}, {"01"})
+
+
 if __name__ == "__main__":
     unittest.main()
