@@ -26,7 +26,9 @@ The supervisor schedules only. It does not edit business files or ticket files, 
 
 ## Security
 
-Task Sessions run Claude Code with `bypassPermissions` and `--dangerously-skip-permissions` so the chain can execute unattended. This grants autonomous command and file access. Run Ticket Loop only in a trusted local repository with trusted project instructions, plugins, hooks, MCP servers, and dependencies. Git gates protect workflow consistency; they are not a sandbox.
+Task Sessions run Claude Code with `bypassPermissions` and `--dangerously-skip-permissions` so the chain can execute unattended. The Runner also appends a fixed unattended system context: ticket/spec test seams are pre-authorized, and a missing local, reversible, low-risk test seam uses the recommended default instead of waiting for confirmation. Irreversible work, credentials, production changes, external publication, push/PR, history rewrites, and out-of-scope deletion still stop for the user. This context is a behavioral contract, not a sandbox.
+
+This mode grants autonomous command and file access. Run Ticket Loop only in a trusted local repository with trusted project instructions, plugins, hooks, MCP servers, and dependencies. Git gates protect workflow consistency; they are not a sandbox. Mutation commands use a repository-level POSIX lock, track the Claude process group, and fail closed on a mismatched returned Session ID. `abort` terminates an active Claude process group before releasing the repository, while a stale spawned call is recovered only through the exact original Session.
 
 ## Runtime options
 

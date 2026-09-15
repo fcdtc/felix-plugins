@@ -129,10 +129,13 @@ CLI 每次只执行一个原子步骤，并以结构化 JSON 返回状态、失�
 - 工单依赖解析只读取 `Blocked by` 字段中的编号，不从标题或正文任意提取数字。
 - manifest 和同一 issues 目录共同构成依赖解析域。manifest 外的 task blocker 必须为 done；manifest 外的 wayfinder blocker 必须为 resolved。
 - 依赖图在开始执行前检查缺失节点、重复编号、自依赖和环。运行始终串行选择编号最小的 frontier 工单，不并行处理 ticket。
-- 每张新工单使用预生成 UUID 的全新、可持久化 Claude Code session。恢复只使用精确 session ID，不使用“最近会话”语义。
+- 每张新工单使用预生成 UUID 的全新、可持久化 Claude Code session。恢复只使用精确 session ID，不使用“最近会话”语义；Claude JSON 返回的 session ID 必须同时匹配当前 ledger 与 active ticket 映射，否则 fail closed。
+- 所有 mutation 命令通过 Git common directory 下固定 inode 的 POSIX command lock 串行执行；活动调用记录 Runner PID、Claude child PID/PGID 和 in-flight transport 状态，`abort` 先终止并确认整个子进程组退出，再释放仓库锁。
+- Claude 调用前持久化 prepared intent，spawn 后持久化 child PGID；spawn 失败不创建 recovery，Runner 崩溃后若调用已 spawn，则回收遗留进程组并只允许通过原 session resume。
 - 新 session 的第一条 prompt 严格为 `/<resolved-implement-command> @<ticket-absolute-path>`，不追加其他文字。
 - 实现命令默认解析 `/implement`；可自动识别已安装的 namespaced 等价命令，也可由参数显式覆盖。解析结果冻结到 manifest。
 - Claude Code 子进程使用非交互打印模式、JSON 输出和无人值守权限模式。模型默认继承用户配置，可显式覆盖并冻结到 manifest。
+- Task Session 通过独立的 appended system context 获得无人值守决策契约，不改变严格的首条 slash-command prompt：工单/spec 已声明的测试 seam 视为预先同意；缺失时对纯本地、可逆、低风险 seam 采用推荐默认并记录，高风险、不可逆或外部副作用仍停止。
 - 每张工单有 implementation 与 closeout 两个阶段。implementation 首次调用后最多恢复两次；closeout 固定首次调用后最多恢复两次。
 - implementation 默认超时 90 分钟；closeout 与异常恢复默认超时 30 分钟；所有超时可配置。
 - implementation 成功不能只依赖 Claude 文本或退出码，必须同时满足 Git 历史合法、存在至少一个新提交、没有未提交修改、没有未完成 Git 操作等门禁。

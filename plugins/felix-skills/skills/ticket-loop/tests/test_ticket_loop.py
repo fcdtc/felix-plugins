@@ -292,6 +292,8 @@ import sys
 import time
 
 args = sys.argv[1:]
+session_flag = "--resume" if "--resume" in args else "--session-id"
+session_id = args[args.index(session_flag) + 1]
 root = Path.cwd()
 calls_path = root / ".ticket-loop" / "claude-calls.jsonl"
 prior_calls = calls_path.read_text(encoding="utf-8").splitlines() if calls_path.exists() else []
@@ -321,35 +323,35 @@ if scenario in {"interruptible", "interruptible-ignore-term"}:
     (root / ".ticket-loop" / "claude-ready").write_text("ready", encoding="utf-8")
     time.sleep(30)
 if scenario == "nonzero-once" and call_number == 1:
-    print(json.dumps({"type": "result"}))
+    print(json.dumps({"type": "result", "session_id": session_id}))
     print("fake failure", file=sys.stderr)
     raise SystemExit(7)
 if scenario == "invalid-json-once" and call_number == 1:
     print("not json")
     raise SystemExit(0)
 if scenario == "is-error-once" and call_number == 1:
-    print(json.dumps({"type": "result", "is_error": True}))
+    print(json.dumps({"type": "result", "session_id": session_id, "is_error": True}))
     raise SystemExit(0)
 if scenario in {"always-error", "closeout-always-error"} and (
     scenario == "always-error" or not is_implementation
 ):
-    print(json.dumps({"type": "error", "message": "recoverable fake failure"}))
+    print(json.dumps({"type": "error", "session_id": session_id, "message": "recoverable fake failure"}))
     raise SystemExit(0)
 
 if is_implementation:
     if scenario == "no-commit" or (scenario == "no-commit-once" and call_number == 1):
-        print(json.dumps({"type": "result", "total_cost_usd": 0.01}))
+        print(json.dumps({"type": "result", "session_id": session_id, "total_cost_usd": 0.01}))
         raise SystemExit(0)
     if scenario == "dirty-once" and call_number == 1:
         (root / "implementation.txt").write_text("implemented\\n", encoding="utf-8")
-        print(json.dumps({"type": "result", "total_cost_usd": 0.01}))
+        print(json.dumps({"type": "result", "session_id": session_id, "total_cost_usd": 0.01}))
         raise SystemExit(0)
     if scenario == "commit-and-dirty-once" and call_number == 1:
         (root / "implementation.txt").write_text("implemented\\n", encoding="utf-8")
         subprocess.run(["git", "add", "implementation.txt"], check=True)
         subprocess.run(["git", "commit", "-qm", "feat: partial implementation"], check=True)
         (root / "follow-up.txt").write_text("remaining\\n", encoding="utf-8")
-        print(json.dumps({"type": "result", "total_cost_usd": 0.01}))
+        print(json.dumps({"type": "result", "session_id": session_id, "total_cost_usd": 0.01}))
         raise SystemExit(0)
     if (root / "implementation.txt").exists():
         subprocess.run(["git", "add", "implementation.txt"], check=True)
@@ -394,7 +396,7 @@ elif scenario != "already-closed":
     if scenario == "closeout-dirty-once" and "## Completion evidence" not in text:
         text += "\\n## Completion evidence\\n\\n- Implementation: implementation commit\\n- Typecheck: Not applicable (pure text fixture)\\n- Tests: fake CLI lifecycle passed\\n"
         ticket.write_text(text, encoding="utf-8")
-        print(json.dumps({"type": "result", "total_cost_usd": 0.01}))
+        print(json.dumps({"type": "result", "session_id": session_id, "total_cost_usd": 0.01}))
         raise SystemExit(0)
     if scenario == "closeout-dirty-once" and "- Review:" not in text:
         text += "- Review: reviewed implementation commit\\n"
@@ -405,7 +407,11 @@ elif scenario != "already-closed":
     ticket.write_text(text, encoding="utf-8")
     subprocess.run(["git", "add", str(ticket)], check=True)
     subprocess.run(["git", "commit", "-qm", "chore(ticket-loop): close 02"], check=True)
-result = {"type": "result"}
+result = {"type": "result", "session_id": session_id}
+if scenario == "missing-session-id":
+    result.pop("session_id")
+elif scenario == "mismatched-session-id":
+    result["session_id"] = "00000000-0000-4000-8000-000000000000"
 if scenario != "no-cost":
     result["total_cost_usd"] = 0.01
 print(json.dumps(result))
@@ -628,13 +634,15 @@ print(json.dumps(result))
 
         self.assertEqual(started.returncode, 0, started.stderr)
         ledger = self.ledger(self.payload(started)["run_id"])
-        self.assertEqual(ledger["manifest"]["schema_version"], "1.0")
+        self.assertEqual(ledger["schema_version"], "1.1")
+        self.assertEqual(ledger["manifest"]["schema_version"], "1.1")
         self.assertEqual(
             ledger["manifest"]["runtime"],
             {
                 "implement_command": "mattpocock-skills:implement",
                 "model": "claude-opus-5",
                 "permission_mode": "bypassPermissions",
+                "unattended_context_version": "ticket-loop-unattended-v1",
                 "max_cost_usd": 2.5,
                 "timeouts": {"implementation": 5400.0, "closeout": 1800.0, "resume": 1800.0},
             },
@@ -958,6 +966,63 @@ print(json.dumps(result))
         self.assertIn("--resume", calls[1])
         self.assertEqual(calls[1][calls[1].index("--resume") + 1], session_id)
         self.assertNotIn("--session-id", calls[1])
+        for call in calls:
+            self.assertEqual(call.count("--append-system-prompt"), 1)
+            context = call[call.index("--append-system-prompt") + 1]
+            self.assertIn("无人值守", context)
+            self.assertIn("测试 seam", context)
+        self.assertEqual(calls[0][-1], f"/implement @{self.ticket.resolve()}")
+
+    def test_launch_failure_does_not_require_resume(self):
+        missing = Path(self.temp.name) / "missing-claude"
+        started = self.cli(
+            "start",
+            "--tickets",
+            self.ticket,
+            "--claude-executable",
+            missing,
+            "--implement-command",
+            "implement",
+        )
+        run_id = self.payload(started)["run_id"]
+
+        failed = self.cli("step", "--run", run_id)
+
+        self.assert_rejected(failed, "claude-launch-failed")
+        status = self.payload(self.cli("status", "--run", run_id))
+        self.assertEqual(status["allowed_actions"], ["step", "status", "abort"])
+        ledger = self.ledger(run_id)
+        self.assertIsNone(ledger.get("recovery"))
+        self.assertIsNone(ledger.get("in_flight"))
+        self.assertEqual(ledger["attempts"]["implementation"], {"initial": 0, "resumes": 0})
+
+    def test_rejects_missing_claude_session_id(self):
+        started = self.start("--implement-command", "implement")
+        run_id = self.payload(started)["run_id"]
+        self.set_scenario("missing-session-id")
+
+        failed = self.cli("step", "--run", run_id)
+
+        self.assert_rejected(failed, "claude-session-mismatch")
+        status = self.payload(self.cli("status", "--run", run_id))
+        self.assertEqual(status["phase"], "implementation")
+        self.assertEqual(status["state"], "terminal-failure")
+        self.assertEqual(status["allowed_actions"], ["status", "abort"])
+        self.assert_rejected(self.cli("reopen", "--run", run_id), "run-not-reopenable")
+
+    def test_rejects_mismatched_claude_session_id(self):
+        started = self.start("--implement-command", "implement")
+        run_id = self.payload(started)["run_id"]
+        self.set_scenario("mismatched-session-id")
+
+        failed = self.cli("step", "--run", run_id)
+
+        self.assert_rejected(failed, "claude-session-mismatch")
+        status = self.payload(self.cli("status", "--run", run_id))
+        self.assertEqual(status["phase"], "implementation")
+        self.assertEqual(status["state"], "terminal-failure")
+        self.assertEqual(status["allowed_actions"], ["status", "abort"])
+        self.assert_rejected(self.cli("reopen", "--run", run_id), "run-not-reopenable")
 
     def test_closeout_creates_no_empty_commit_when_implementation_already_closed_ticket(self):
         started = self.cli(
@@ -1056,6 +1121,32 @@ print(json.dumps(result))
             self.assert_rejected(self.cli("status", "--run", run_id), "invalid-run-ledger")
             ledger_path.write_text(json.dumps(ledger), encoding="utf-8")
 
+    def test_legacy_ledger_allows_status_abort_and_clean_but_not_resume(self):
+        run_id = self.payload(self.start())["run_id"]
+        ledger_path = self.root / ".ticket-loop" / "runs" / f"{run_id}.json"
+        ledger = self.ledger(run_id)
+        ledger["schema_version"] = "1.0"
+        ledger["manifest"]["schema_version"] = "1.0"
+        ledger["manifest"]["runtime"].pop("unattended_context_version")
+        ledger.pop("lock_id", None)
+        ledger.pop("in_flight", None)
+        ledger_path.write_text(json.dumps(ledger), encoding="utf-8")
+
+        status = self.cli("status", "--run", run_id)
+        self.assertEqual(status.returncode, 0, status.stderr)
+        self.assertEqual(self.payload(status)["allowed_actions"], ["status", "abort"])
+        self.assert_rejected(self.cli("step", "--run", run_id), "legacy-ledger-not-resumable")
+        self.assert_rejected(self.cli("resume", "--run", run_id), "legacy-ledger-not-resumable")
+        ledger["state"] = "interrupted"
+        ledger_path.write_text(json.dumps(ledger), encoding="utf-8")
+        self.assert_rejected(self.cli("reopen", "--run", run_id), "legacy-ledger-not-resumable")
+        ledger["state"] = "running"
+        ledger_path.write_text(json.dumps(ledger), encoding="utf-8")
+        aborted = self.cli("abort", "--run", run_id)
+        self.assertEqual(aborted.returncode, 0, aborted.stderr)
+        cleaned = self.cli("clean", "--run", run_id)
+        self.assertEqual(cleaned.returncode, 0, cleaned.stderr)
+
     def test_status_reports_attempts_calls_and_remains_read_only(self):
         run_id = self.payload(self.start())["run_id"]
         before = self.ledger(run_id)
@@ -1125,6 +1216,27 @@ print(json.dumps(result))
         self.assertEqual(self.ledger(run_id)["session_id"], payload["session_id"])
         self.assertEqual(json.loads(self.lock_path().read_text(encoding="utf-8"))["run_id"], run_id)
 
+    def test_post_call_branch_drift_reopens_with_exact_resume(self):
+        original_branch = self.git("branch", "--show-current").strip()
+        run_id = self.payload(self.start())["run_id"]
+        session_id = self.payload(self.cli("status", "--run", run_id))["session_id"]
+        self.set_scenario("branch-drift")
+
+        drifted = self.cli("step", "--run", run_id)
+
+        self.assert_rejected(drifted, "branch-drift")
+        subprocess.run(["git", "-C", str(self.root), "switch", "-q", original_branch], check=True)
+        reopened = self.cli("reopen", "--run", run_id)
+        self.assertEqual(reopened.returncode, 0, reopened.stderr)
+        self.assertEqual(self.payload(reopened)["allowed_actions"], ["resume", "status", "abort"])
+        self.set_scenario("no-commit")
+        resumed = self.cli("resume", "--run", run_id)
+        self.assertEqual(resumed.returncode, 0, resumed.stderr)
+        call = self.recorded_calls()[-1]
+        self.assertIn("--resume", call)
+        self.assertEqual(call[call.index("--resume") + 1], session_id)
+        self.assertNotIn("--session-id", call)
+
     def test_reopen_fails_closed_when_repository_context_changed(self):
         run_id = self.payload(self.start())["run_id"]
         self.set_scenario("no-commit")
@@ -1144,21 +1256,85 @@ print(json.dumps(result))
         self.assertFalse(self.calls.exists())
         self.assertFalse(self.lock_path().exists())
 
-    def test_stale_lock_marks_running_run_interrupted_and_unique_step_auto_selects_it(self):
+    def test_stale_prepared_call_can_retry_initial_without_a_session(self):
+        run_id = self.payload(self.start())["run_id"]
+        ledger_path = self.root / ".ticket-loop" / "runs" / f"{run_id}.json"
+        ledger = self.ledger(run_id)
+        ledger["in_flight"] = {
+            "invocation_id": "prepared-only",
+            "phase": "implementation",
+            "attempt_kind": "initial",
+            "session_id": ledger["session_id"],
+            "state": "prepared",
+            "runner_pid": 99999999,
+            "child_pid": None,
+            "child_pgid": None,
+        }
+        ledger_path.write_text(json.dumps(ledger), encoding="utf-8")
+        lock = json.loads(self.lock_path().read_text(encoding="utf-8"))
+        lock["active_pid"] = 99999999
+        self.lock_path().write_text(json.dumps(lock), encoding="utf-8")
+
+        retried = self.cli("step", "--run", run_id)
+
+        self.assertEqual(retried.returncode, 0, retried.stderr)
+        call = self.recorded_calls()[-1]
+        self.assertIn("--session-id", call)
+        self.assertNotIn("--resume", call)
+
+    def test_stale_lock_without_spawned_call_retries_current_step(self):
         run_id = self.payload(self.start())["run_id"]
         lock = json.loads(self.lock_path().read_text(encoding="utf-8"))
         lock["active_pid"] = 99999999
         self.lock_path().write_text(json.dumps(lock), encoding="utf-8")
 
-        interrupted = self.cli("step")
+        retried = self.cli("step")
 
-        self.assert_rejected(interrupted, "run-interrupted")
-        payload = self.payload(self.cli("status", "--run", run_id))
-        self.assertEqual(payload["state"], "interrupted")
-        self.assertEqual(payload["allowed_actions"], ["reopen", "status", "abort"])
-        self.assertFalse(self.lock_path().exists())
+        self.assertEqual(retried.returncode, 0, retried.stderr)
+        payload = self.payload(retried)
+        self.assertEqual(payload["state"], "running")
+        self.assertEqual(payload["phase"], "closeout")
+        self.assertTrue(self.lock_path().exists())
         archived = list((self.lock_path().parent / "stale").glob("*.json"))
         self.assertEqual(len(archived), 1)
+
+    def test_sigkill_stale_spawned_call_requires_exact_resume(self):
+        run_id = self.payload(self.start())["run_id"]
+        session_id = self.payload(self.cli("status", "--run", run_id))["session_id"]
+        self.set_scenario("interruptible")
+        runner = subprocess.Popen(
+            [sys.executable, str(CLI), "step", "--run", run_id],
+            cwd=self.root,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        ready = self.root / ".ticket-loop" / "claude-ready"
+        deadline = time.time() + 5
+        while not ready.exists() and time.time() < deadline:
+            time.sleep(0.05)
+        self.assertTrue(ready.exists())
+        os.kill(runner.pid, signal.SIGKILL)
+        runner.communicate(timeout=5)
+
+        interrupted = self.cli("step", "--run", run_id)
+
+        self.assert_rejected(interrupted, "run-interrupted")
+        status = self.payload(self.cli("status", "--run", run_id))
+        self.assertEqual(status["state"], "interrupted")
+        self.assertEqual(status["allowed_actions"], ["reopen", "status", "abort"])
+        reopened = self.cli("reopen", "--run", run_id)
+        self.assertEqual(reopened.returncode, 0, reopened.stderr)
+        self.assertEqual(self.payload(reopened)["allowed_actions"], ["resume", "status", "abort"])
+
+        self.set_scenario("default")
+        resumed = self.cli("resume", "--run", run_id)
+
+        self.assertEqual(resumed.returncode, 0, resumed.stderr)
+        call = self.recorded_calls()[-1]
+        self.assertIn("--resume", call)
+        self.assertEqual(call[call.index("--resume") + 1], session_id)
+        self.assertNotIn("--session-id", call)
 
     def test_implicit_run_selection_fails_closed_with_multiple_candidates(self):
         first = self.payload(self.start())["run_id"]
@@ -1181,6 +1357,53 @@ print(json.dumps(result))
         self.assertIn(first, payload["error"]["message"])
         self.assertIn(second, payload["error"]["message"])
         self.assertIn("--run", payload["error"]["message"])
+
+    def test_concurrent_step_is_rejected_while_claude_is_active(self):
+        run_id = self.payload(self.start())["run_id"]
+        self.set_scenario("interruptible")
+        first = subprocess.Popen(
+            [sys.executable, str(CLI), "step", "--run", run_id],
+            cwd=self.root,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        ready = self.root / ".ticket-loop" / "claude-ready"
+        deadline = time.time() + 5
+        while not ready.exists() and time.time() < deadline:
+            time.sleep(0.05)
+        self.assertTrue(ready.exists())
+
+        second = self.cli("step", "--run", run_id)
+
+        self.assert_rejected(second, "run-active")
+        first.send_signal(signal.SIGTERM)
+        first.communicate(timeout=5)
+        self.assertEqual(len(self.recorded_calls()), 1)
+
+    def test_abort_terminates_active_claude_before_releasing_lock(self):
+        run_id = self.payload(self.start())["run_id"]
+        self.set_scenario("interruptible-ignore-term")
+        active = subprocess.Popen(
+            [sys.executable, str(CLI), "step", "--run", run_id],
+            cwd=self.root,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        ready = self.root / ".ticket-loop" / "claude-ready"
+        deadline = time.time() + 5
+        while not ready.exists() and time.time() < deadline:
+            time.sleep(0.05)
+        self.assertTrue(ready.exists())
+
+        aborted = self.cli("abort", "--run", run_id)
+
+        self.assertEqual(aborted.returncode, 0, aborted.stderr)
+        self.assertEqual(self.payload(aborted)["state"], "aborted")
+        active.communicate(timeout=5)
+        self.assertFalse(self.lock_path().exists())
+        self.assertEqual(self.ledger(run_id)["state"], "aborted")
 
     def test_sigterm_interrupts_child_records_run_and_releases_lock(self):
         run_id = self.payload(self.start())["run_id"]
@@ -1253,7 +1476,7 @@ scenario_path = root / ".ticket-loop" / "manifest-scenario.json"
 scenarios = json.loads(scenario_path.read_text(encoding="utf-8")) if scenario_path.exists() else {}
 scenario = scenarios.get(ticket_id, "success")
 if scenario == "always-error" and phase == "implementation":
-    print(json.dumps({"type": "error"}))
+    print(json.dumps({"type": "error", "session_id": session_id}))
     raise SystemExit(0)
 if phase == "implementation":
     implementation = root / f"implementation-{ticket_id}.txt"
@@ -1277,7 +1500,7 @@ else:
     ticket.write_text(text, encoding="utf-8")
     subprocess.run(["git", "add", str(ticket)], check=True)
     subprocess.run(["git", "commit", "-qm", f"chore(ticket-loop): close {ticket_id}"], check=True)
-print(json.dumps({"type": "result", "total_cost_usd": 0.01}))
+print(json.dumps({"type": "result", "session_id": session_id, "total_cost_usd": 0.01}))
 ''',
             encoding="utf-8",
         )
@@ -1499,7 +1722,7 @@ else:
     ticket.write_text(text)
     subprocess.run(["git", "add", str(ticket)], check=True)
     subprocess.run(["git", "commit", "-qm", f"chore(ticket-loop): close {ticket.name[:2]}"], check=True)
-print(json.dumps({"type": "result", "total_cost_usd": 0.01}))
+print(json.dumps({"type": "result", "session_id": session_id, "total_cost_usd": 0.01}))
 ''',
             encoding="utf-8",
         )

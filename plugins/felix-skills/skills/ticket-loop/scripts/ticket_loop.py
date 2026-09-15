@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 import fcntl
@@ -23,7 +24,9 @@ import uuid
 
 
 SCHEMA_VERSION = "1.0"
-MANIFEST_SCHEMA_VERSION = "1.0"
+LEDGER_SCHEMA_VERSION = "1.1"
+MANIFEST_SCHEMA_VERSION = "1.1"
+LEGACY_SCHEMA_VERSION = "1.0"
 TERMINAL_GIT_ERRORS = {
     "repository-drift",
     "branch-drift",
@@ -36,12 +39,15 @@ TERMINAL_GIT_ERRORS = {
     "external-blocker-modified",
     "max-cost-reached",
     "cost-unknown",
+    "claude-session-mismatch",
 }
 MAX_PHASE_RESUMES = 2
 DEFAULT_IMPLEMENTATION_TIMEOUT_SECONDS = 90 * 60
 DEFAULT_CLOSEOUT_TIMEOUT_SECONDS = 30 * 60
 DEFAULT_RESUME_TIMEOUT_SECONDS = 30 * 60
 PERMISSION_MODE = "bypassPermissions"
+UNATTENDED_CONTEXT_VERSION = "ticket-loop-unattended-v1"
+UNATTENDED_CONTEXT = """这是由 Ticket Loop 启动的无人值守 Task Session。工单、引用规格中的 Testing Decisions、验收标准和既有公共测试边界视为用户已预先同意的实施范围与测试 seam。对于未明确列出、但可从既有公共接口、相邻测试惯例和验收标准确定的纯本地、可逆、低风险测试 seam，采用推荐默认，记录假设并继续，不要等待用户确认。用户已授权完成当前工单所需的本地源码、测试、工单状态修改和本地提交。仅当决策不可逆、涉及凭据或生产环境、产生网络发布等外部副作用、需要 push 或创建 PR、改写 Git 历史、超范围删除，或不同选择会实质改变交付结果且无法安全回退时，停止并清楚报告。不得开始其他工单。"""
 INTERRUPT_GRACE_SECONDS = 1.0
 INCOMPLETE_STATES = {"running", "interrupted", "terminal-failure"}
 FILENAME_RE = re.compile(r"^(?P<id>0[1-9]|[1-9]\d)-.+\.md$")
@@ -436,6 +442,29 @@ def lock_path(common: Path) -> Path:
     return common / "ticket-loop" / "lock.json"
 
 
+def command_lock_path(common: Path) -> Path:
+    return common / "ticket-loop" / "command.lock"
+
+
+@contextmanager
+def command_lock(common: Path, *, blocking: bool = False):
+    path = command_lock_path(common)
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    descriptor = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        operation = fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB)
+        try:
+            fcntl.flock(descriptor, operation)
+        except BlockingIOError as error:
+            raise PlanError("run-active", "Loop Run 正在执行另一个 mutation 命令") from error
+        yield
+    finally:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(descriptor)
+
+
 def acquire_run_lock(common: Path, lock: dict[str, object]) -> None:
     path = lock_path(common)
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -468,16 +497,24 @@ def read_run_lock(common: Path) -> dict[str, object]:
 
 def ensure_run_lock(ledger: dict[str, object]) -> None:
     lock = read_run_lock(Path(str(ledger["git_common_directory"])))
-    if lock.get("run_id") != ledger["run_id"]:
+    if lock.get("run_id") != ledger["run_id"] or lock.get("lock_id") != ledger.get("lock_id"):
         raise PlanError("run-lock-mismatch", "仓库锁不属于当前 Loop Run")
 
 
-def set_lock_active_pid(ledger: dict[str, object], pid: int | None) -> None:
+def set_lock_activity(
+    ledger: dict[str, object],
+    pid: int | None,
+    *,
+    child_pid: int | None = None,
+    child_pgid: int | None = None,
+) -> None:
     common = Path(str(ledger["git_common_directory"]))
     lock = read_run_lock(common)
-    if lock.get("run_id") != ledger["run_id"]:
+    if lock.get("run_id") != ledger["run_id"] or lock.get("lock_id") != ledger.get("lock_id"):
         raise PlanError("run-lock-mismatch", "仓库锁不属于当前 Loop Run")
     lock["active_pid"] = pid
+    lock["child_pid"] = child_pid
+    lock["child_pgid"] = child_pgid
     path = lock_path(common)
     temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     temporary.write_text(json.dumps(lock, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -485,23 +522,31 @@ def set_lock_active_pid(ledger: dict[str, object], pid: int | None) -> None:
     temporary.replace(path)
 
 
+def set_lock_active_pid(ledger: dict[str, object], pid: int | None) -> None:
+    set_lock_activity(ledger, pid)
+
+
 def release_run_lock(ledger: dict[str, object]) -> None:
     path = lock_path(Path(str(ledger["git_common_directory"])))
     try:
-        with path.open("r+", encoding="utf-8") as stream:
-            fcntl.flock(stream, fcntl.LOCK_EX)
-            try:
-                lock = json.load(stream)
-            except json.JSONDecodeError:
-                return
-            same_file = os.fstat(stream.fileno()).st_ino == path.stat().st_ino
-            if same_file and isinstance(lock, dict) and lock.get("run_id") == ledger["run_id"]:
-                path.unlink()
+        lock = read_run_lock(Path(str(ledger["git_common_directory"])))
+    except PlanError as error:
+        if error.code == "run-lock-missing":
+            return
+        raise
+    same_identity = lock.get("run_id") == ledger["run_id"]
+    if ledger.get("schema_version") != LEGACY_SCHEMA_VERSION:
+        same_identity = same_identity and lock.get("lock_id") == ledger.get("lock_id")
+    if not same_identity:
+        return
+    try:
+        path.unlink()
     except FileNotFoundError:
         return
 
 
 def write_ledger(path: Path, ledger: dict[str, object]) -> None:
+    ledger.pop("_legacy", None)
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     descriptor = os.open(temporary, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
@@ -534,7 +579,7 @@ def incomplete_run_ids(repository: Path) -> list[str]:
             continue
         if (
             isinstance(ledger, dict)
-            and ledger.get("schema_version") == SCHEMA_VERSION
+            and ledger.get("schema_version") == LEDGER_SCHEMA_VERSION
             and ledger.get("run_id") == path.stem
             and ledger.get("state") in INCOMPLETE_STATES
         ):
@@ -555,14 +600,21 @@ def resolve_run_id(run_id: str | None) -> str:
     return candidates[0]
 
 
-def validate_manifest(manifest: object, path: Path) -> None:
-    if not isinstance(manifest, dict) or manifest.get("schema_version") != MANIFEST_SCHEMA_VERSION:
+def validate_manifest(manifest: object, path: Path, *, legacy: bool = False) -> None:
+    expected_version = LEGACY_SCHEMA_VERSION if legacy else MANIFEST_SCHEMA_VERSION
+    if not isinstance(manifest, dict) or manifest.get("schema_version") != expected_version:
         raise PlanError("invalid-run-ledger", f"Run Manifest 不兼容: {path}")
     runtime = manifest.get("runtime")
     if not isinstance(runtime, dict):
         raise PlanError("invalid-run-ledger", f"Run Manifest 缺少冻结运行配置: {path}")
     required = {"implement_command", "model", "permission_mode", "max_cost_usd", "timeouts"}
-    if set(runtime) != required or runtime.get("permission_mode") != PERMISSION_MODE:
+    if not legacy:
+        required.add("unattended_context_version")
+    if (
+        set(runtime) != required
+        or runtime.get("permission_mode") != PERMISSION_MODE
+        or (not legacy and runtime.get("unattended_context_version") != UNATTENDED_CONTEXT_VERSION)
+    ):
         raise PlanError("invalid-run-ledger", f"Run Manifest 运行配置不兼容: {path}")
     command = runtime.get("implement_command")
     model = runtime.get("model")
@@ -606,9 +658,11 @@ def load_ledger(run_id: str | None) -> tuple[Path, dict[str, object]]:
         raise PlanError("invalid-run-ledger", f"无法读取 Run Ledger: {path}") from error
     if not isinstance(ledger, dict):
         raise PlanError("invalid-run-ledger", f"Run Ledger 不兼容: {path}")
-    if ledger.get("schema_version") != SCHEMA_VERSION or ledger.get("run_id") != run_id:
+    version = ledger.get("schema_version")
+    if version not in {LEDGER_SCHEMA_VERSION, LEGACY_SCHEMA_VERSION} or ledger.get("run_id") != run_id:
         raise PlanError("invalid-run-ledger", f"Run Ledger 不兼容: {path}")
-    validate_manifest(ledger.get("manifest"), path)
+    validate_manifest(ledger.get("manifest"), path, legacy=version == LEGACY_SCHEMA_VERSION)
+    ledger["_legacy"] = version == LEGACY_SCHEMA_VERSION
     return path, ledger
 
 
@@ -627,11 +681,17 @@ def maintain_local_exclude(repository: Path, common: Path) -> None:
 
 def allowed_actions(ledger: dict[str, object]) -> list[str]:
     state = ledger["state"]
+    if ledger.get("_legacy"):
+        if state in {"completed", "aborted"}:
+            return ["status", "clean"]
+        return ["status", "abort"]
     if state == "completed":
         return ["status", "clean"]
     if state == "aborted":
         return ["status", "clean"]
     if state in {"interrupted", "terminal-failure"}:
+        if ledger.get("terminal_reason") == "claude-session-mismatch":
+            return ["status", "abort"]
         return ["reopen", "status", "abort"]
     if ledger.get("recovery"):
         return ["resume", "status", "abort"]
@@ -829,7 +889,7 @@ def resolve_implement_command(raw: str | None) -> str:
     return command
 
 
-def start_command(args: argparse.Namespace) -> dict[str, object]:
+def start_command_locked(args: argparse.Namespace) -> dict[str, object]:
     repository, common, branch, head = repository_identity(Path.cwd())
     ensure_clean(repository)
     manifest = plan_command(args)
@@ -846,6 +906,7 @@ def start_command(args: argparse.Namespace) -> dict[str, object]:
         "implement_command": implement_command,
         "model": args.model,
         "permission_mode": PERMISSION_MODE,
+        "unattended_context_version": UNATTENDED_CONTEXT_VERSION,
         "max_cost_usd": args.max_cost_usd,
         "timeouts": {
             "implementation": args.implementation_timeout_seconds,
@@ -855,8 +916,9 @@ def start_command(args: argparse.Namespace) -> dict[str, object]:
     }
     manifest["runtime"] = runtime
     ledger: dict[str, object] = {
-        "schema_version": SCHEMA_VERSION,
+        "schema_version": LEDGER_SCHEMA_VERSION,
         "run_id": run_id,
+        "lock_id": str(uuid.uuid4()),
         "state": "running",
         "phase": "implementation",
         "repository": str(repository),
@@ -883,6 +945,7 @@ def start_command(args: argparse.Namespace) -> dict[str, object]:
             "closeout": {"initial": 0, "resumes": 0},
         },
         "recovery": None,
+        "in_flight": None,
         "claude_calls": [],
         "cost": {"total_usd": 0.0, "unknown": False, "max_usd": args.max_cost_usd},
         "gate_failures": [],
@@ -895,19 +958,7 @@ def start_command(args: argparse.Namespace) -> dict[str, object]:
             + json.dumps(blocked_manifest_details(ledger), ensure_ascii=False, separators=(",", ":")),
         )
     activate_ticket(ledger, first_ticket, head)
-    acquire_run_lock(
-        common,
-        {
-            "schema_version": SCHEMA_VERSION,
-            "pid": os.getpid(),
-            "active_pid": None,
-            "run_id": run_id,
-            "started_at": datetime.now(timezone.utc).isoformat(),
-            "repository": str(repository),
-            "git_common_directory": str(common),
-            "branch": branch,
-        },
-    )
+    acquire_run_lock(common, lifecycle_lock_payload(ledger))
     path = ledger_path(repository, run_id)
     try:
         write_ledger(path, ledger)
@@ -915,6 +966,12 @@ def start_command(args: argparse.Namespace) -> dict[str, object]:
         release_run_lock(ledger)
         raise
     return public_run(ledger, "start")
+
+
+def start_command(args: argparse.Namespace) -> dict[str, object]:
+    _, common = repository_location(Path.cwd())
+    with command_lock(common):
+        return start_command_locked(args)
 
 
 def persist_claude_output(
@@ -968,12 +1025,29 @@ def ensure_cost_allows_call(ledger: dict[str, object]) -> None:
         raise PlanError("max-cost-reached", f"累计费用 ${float(total):g} 已达到上限 ${float(maximum):g}")
 
 
+def child_launcher() -> int:
+    control_fd = int(sys.argv[2])
+    command = sys.argv[3:]
+    try:
+        allowed = os.read(control_fd, 1)
+    finally:
+        os.close(control_fd)
+    if allowed != b"1":
+        return 125
+    try:
+        os.execvp(command[0], command)
+    except OSError as error:
+        print(f"ticket-loop-exec-failed: {error}", file=sys.stderr)
+        return 126
+
+
 def invoke_claude(
     ledger: dict[str, object],
     phase: str,
     prompt: str,
     *,
     resume: bool,
+    recovery_attempt: bool,
     timeout_seconds: float,
 ) -> dict[str, object]:
     ensure_cost_allows_call(ledger)
@@ -985,6 +1059,8 @@ def invoke_claude(
         "--permission-mode",
         PERMISSION_MODE,
         "--dangerously-skip-permissions",
+        "--append-system-prompt",
+        UNATTENDED_CONTEXT,
     ]
     model = runtime_config(ledger).get("model")
     if model:
@@ -992,17 +1068,43 @@ def invoke_claude(
     command.extend(["--resume" if resume else "--session-id", str(ledger["session_id"])])
     command.append(prompt)
     invocation = "resume" if resume else "initial"
+    control_read, control_write = os.pipe()
+    launcher_command = [sys.executable, str(Path(__file__).resolve()), "__child-launcher", str(control_read), *command]
     try:
         process = subprocess.Popen(
-            command,
+            launcher_command,
             cwd=str(ledger["repository"]),
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             start_new_session=True,
+            pass_fds=(control_read,),
         )
     except OSError as error:
-        raise PlanError("claude-launch-failed", f"无法启动 Claude: {error}") from error
+        os.close(control_read)
+        os.close(control_write)
+        ledger["in_flight"] = None
+        write_ledger(ledger_path(Path(str(ledger["repository"])), str(ledger["run_id"])), ledger)
+        raise PlanError("claude-launch-failed", f"无法启动 Claude launcher: {error}") from error
+    os.close(control_read)
+    pgid = os.getpgid(process.pid)
+    attempts = ledger["attempts"][phase]
+    attempts["resumes" if recovery_attempt else "initial"] += 1
+    in_flight = ledger.get("in_flight")
+    if isinstance(in_flight, dict):
+        in_flight.update({
+            "state": "spawned",
+            "child_pid": process.pid,
+            "child_pgid": pgid,
+            "spawned_at": datetime.now(timezone.utc).isoformat(),
+        })
+    set_lock_activity(ledger, os.getpid(), child_pid=process.pid, child_pgid=pgid)
+    write_ledger(ledger_path(Path(str(ledger["repository"])), str(ledger["run_id"])), ledger)
+    try:
+        os.write(control_write, b"1")
+    finally:
+        os.close(control_write)
+
     def note_interrupt(signum: int, _frame: object) -> None:
         try:
             os.killpg(process.pid, signal.SIGTERM)
@@ -1056,12 +1158,35 @@ def invoke_claude(
         process.returncode,
         False,
     )
+    if process.returncode == 126 and stderr.startswith("ticket-loop-exec-failed:"):
+        attempts = ledger["attempts"][phase]
+        counter = "resumes" if recovery_attempt else "initial"
+        attempts[counter] = max(0, int(attempts[counter]) - 1)
+        ledger["in_flight"] = None
+        raise PlanError("claude-launch-failed", f"无法启动 Claude；日志: {raw_path}")
     try:
         parsed = json.loads(stdout)
     except json.JSONDecodeError as error:
         raise PlanError("invalid-claude-json", f"Claude 未返回有效 JSON；日志: {raw_path}") from error
     if not isinstance(parsed, dict):
         raise PlanError("invalid-claude-json", f"Claude JSON 顶层必须是对象；日志: {raw_path}")
+    active_ticket = ledger.get("active_ticket")
+    sessions = ledger.get("task_sessions")
+    expected_session = ledger.get("session_id")
+    ticket_session = sessions.get(active_ticket) if isinstance(sessions, dict) else None
+    reported_session = parsed.get("session_id")
+    call["expected_session_id"] = expected_session
+    call["reported_session_id"] = reported_session
+    if (
+        not isinstance(reported_session, str)
+        or not reported_session
+        or reported_session != expected_session
+        or reported_session != ticket_session
+    ):
+        raise PlanError(
+            "claude-session-mismatch",
+            f"Claude 返回的 Session ID 与当前 Task Session 不一致；日志: {raw_path}",
+        )
     call["result"] = parsed
     cost = ledger.setdefault("cost", {"total_usd": 0.0, "unknown": False})
     reported_cost = parsed.get("total_cost_usd")
@@ -1218,7 +1343,16 @@ def recovery_prompt(ledger: dict[str, object], recovery: dict[str, object]) -> s
     )
 
 
+def ensure_current_ledger(ledger: dict[str, object]) -> None:
+    if ledger.get("_legacy"):
+        raise PlanError(
+            "legacy-ledger-not-resumable",
+            "旧版 Run Ledger 仅支持 status、abort 和 clean，不能继续 Task Session",
+        )
+
+
 def ensure_run_can_invoke(ledger: dict[str, object]) -> None:
+    ensure_current_ledger(ledger)
     if ledger["state"] == "completed":
         raise PlanError("run-already-completed", "Loop Run 已完成")
     if ledger["state"] == "aborted":
@@ -1229,7 +1363,7 @@ def ensure_run_can_invoke(ledger: dict[str, object]) -> None:
         raise PlanError("run-terminal-failure", "Loop Run 已进入 terminal-failure")
 
 
-def invoke_phase(args: argparse.Namespace, *, resume: bool) -> dict[str, object]:
+def invoke_phase_locked(args: argparse.Namespace, *, resume: bool) -> dict[str, object]:
     path, ledger = load_ledger(args.run)
     reconcile_stale_lock(path, ledger)
     ensure_run_can_invoke(ledger)
@@ -1246,6 +1380,20 @@ def invoke_phase(args: argparse.Namespace, *, resume: bool) -> dict[str, object]
     try:
         repository, head = runtime_git_gate(ledger)
         set_lock_active_pid(ledger, os.getpid())
+        invocation_id = str(uuid.uuid4())
+        ledger["in_flight"] = {
+            "invocation_id": invocation_id,
+            "phase": phase,
+            "attempt_kind": "resume" if resume else "initial",
+            "session_id": ledger["session_id"],
+            "state": "prepared",
+            "runner_pid": os.getpid(),
+            "child_pid": None,
+            "child_pgid": None,
+            "prepared_at": datetime.now(timezone.utc).isoformat(),
+            "spawned_at": None,
+        }
+        write_ledger(path, ledger)
         if resume:
             if recovery["phase"] != phase:
                 raise PlanError("recovery-context-drift", "恢复阶段与 Run Ledger 不一致")
@@ -1254,12 +1402,10 @@ def invoke_phase(args: argparse.Namespace, *, resume: bool) -> dict[str, object]
                 raise PlanError("recovery-context-drift", "Git 现场已在失败后发生变化，无法安全恢复")
             prompt = recovery_prompt(ledger, recovery)
             timeout_seconds = float(runtime_config(ledger)["timeouts"]["resume"])
-            attempts["resumes"] += 1
         else:
             ensure_clean(repository)
             prompt = str(ledger[f"{phase}_prompt"])
             timeout_seconds = float(runtime_config(ledger)["timeouts"][phase])
-            attempts["initial"] += 1
         invoked = True
         claude_error: PlanError | None = None
         try:
@@ -1268,6 +1414,7 @@ def invoke_phase(args: argparse.Namespace, *, resume: bool) -> dict[str, object]
                 phase,
                 prompt,
                 resume=resume or phase == "closeout",
+                recovery_attempt=resume,
                 timeout_seconds=timeout_seconds,
             )
         except PlanError as error:
@@ -1283,8 +1430,15 @@ def invoke_phase(args: argparse.Namespace, *, resume: bool) -> dict[str, object]
             completion_gate(ledger, head)
             advance_after_closeout(ledger, head)
         ledger["recovery"] = None
+        ledger["in_flight"] = None
         ledger["gate_failures"] = []
     except PlanError as error:
+        try:
+            current_state = load_ledger(str(ledger["run_id"]))[1].get("state")
+        except PlanError:
+            current_state = None
+        if current_state == "aborted":
+            raise PlanError("run-aborted", "Loop Run 已停止调度") from error
         ledger["gate_failures"] = [{"code": error.code, "message": str(error)}]
         if error.code == "run-interrupted":
             if repository is not None:
@@ -1300,7 +1454,10 @@ def invoke_phase(args: argparse.Namespace, *, resume: bool) -> dict[str, object]
             release_run_lock(ledger)
             raise
         terminal = error.code in TERMINAL_GIT_ERRORS
-        if invoked and not terminal and repository is not None:
+        if error.code == "claude-launch-failed":
+            ledger["in_flight"] = None
+            terminal = False
+        elif invoked and not terminal and repository is not None:
             _, current_head = runtime_git_gate(ledger)
             ledger["recovery"] = {
                 "phase": phase,
@@ -1311,6 +1468,22 @@ def invoke_phase(args: argparse.Namespace, *, resume: bool) -> dict[str, object]
                 terminal = True
         if terminal:
             ledger["state"] = "terminal-failure"
+            ledger["terminal_reason"] = error.code
+            in_flight = ledger.get("in_flight")
+            spawned = isinstance(in_flight, dict) and in_flight.get("state") == "spawned"
+            if error.code != "claude-session-mismatch" and spawned:
+                ledger["recovery"] = {
+                    "phase": phase,
+                    "failure": {"code": error.code, "message": str(error)},
+                    "snapshot": None,
+                    "requires_resume": True,
+                }
+                if repository is not None:
+                    try:
+                        _, current_head = ensure_repository_matches(ledger)
+                        ledger["recovery"]["snapshot"] = recovery_snapshot(repository, current_head)
+                    except PlanError:
+                        pass
         write_ledger(path, ledger)
         if ledger["state"] == "terminal-failure":
             release_run_lock(ledger)
@@ -1323,6 +1496,13 @@ def invoke_phase(args: argparse.Namespace, *, resume: bool) -> dict[str, object]
     else:
         set_lock_active_pid(ledger, None)
     return public_run(ledger, "resume" if resume else "step")
+
+
+def invoke_phase(args: argparse.Namespace, *, resume: bool) -> dict[str, object]:
+    _, snapshot = load_ledger(args.run)
+    common = Path(str(snapshot["git_common_directory"]))
+    with command_lock(common):
+        return invoke_phase_locked(args, resume=resume)
 
 
 def step_command(args: argparse.Namespace) -> dict[str, object]:
@@ -1345,6 +1525,66 @@ def pid_is_alive(pid: object) -> bool:
     return True
 
 
+def process_group_is_alive(pgid: object) -> bool:
+    if not isinstance(pgid, int) or pgid <= 0:
+        return False
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def terminate_process_group(pgid: object, child_pid: object | None = None) -> None:
+    if child_pid is not None:
+        if not isinstance(child_pid, int) or child_pid <= 0 or not pid_is_alive(child_pid):
+            raise PlanError("child-identity-mismatch", "无法验证 Claude 子进程身份")
+        try:
+            actual_pgid = os.getpgid(child_pid)
+        except ProcessLookupError as error:
+            raise PlanError("child-identity-mismatch", "Claude 子进程已消失，无法验证进程组身份") from error
+        if actual_pgid != pgid:
+            raise PlanError("child-identity-mismatch", "Claude 子进程与记录的进程组不匹配")
+    if not process_group_is_alive(pgid):
+        return
+    assert isinstance(pgid, int)
+    try:
+        os.killpg(pgid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    deadline = time.monotonic() + INTERRUPT_GRACE_SECONDS
+    while process_group_is_alive(pgid) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    if process_group_is_alive(pgid):
+        try:
+            os.killpg(pgid, signal.SIGKILL)
+        except ProcessLookupError:
+            return
+        deadline = time.monotonic() + INTERRUPT_GRACE_SECONDS
+        while process_group_is_alive(pgid) and time.monotonic() < deadline:
+            time.sleep(0.05)
+    if process_group_is_alive(pgid):
+        raise PlanError("child-termination-failed", "无法确认 Claude 子进程组已经退出")
+
+
+def lifecycle_lock_payload(ledger: dict[str, object]) -> dict[str, object]:
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "pid": os.getpid(),
+        "active_pid": None,
+        "child_pid": None,
+        "child_pgid": None,
+        "run_id": ledger["run_id"],
+        "lock_id": ledger["lock_id"],
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "repository": ledger["repository"],
+        "git_common_directory": ledger["git_common_directory"],
+        "branch": ledger["branch"],
+    }
+
+
 def reconcile_stale_lock(path: Path, ledger: dict[str, object]) -> None:
     if ledger["state"] != "running":
         return
@@ -1354,56 +1594,98 @@ def reconcile_stale_lock(path: Path, ledger: dict[str, object]) -> None:
     except PlanError:
         return
     active_pid = lock.get("active_pid")
-    if lock.get("run_id") != ledger["run_id"] or active_pid is None or pid_is_alive(active_pid):
+    if (
+        lock.get("run_id") != ledger["run_id"]
+        or lock.get("lock_id") != ledger.get("lock_id")
+        or active_pid is None
+        or pid_is_alive(active_pid)
+    ):
         return
+    in_flight = ledger.get("in_flight")
+    if isinstance(in_flight, dict) and in_flight.get("state") == "spawned":
+        terminate_process_group(
+            in_flight.get("child_pgid") or lock.get("child_pgid"),
+            in_flight.get("child_pid") or lock.get("child_pid"),
+        )
     source = lock_path(common)
     stale = source.parent / "stale"
     stale.mkdir(parents=True, exist_ok=True, mode=0o700)
     archived = stale / f"{ledger['run_id']}-{int(time.time())}.json"
     source.replace(archived)
+    if isinstance(in_flight, dict) and in_flight.get("state") == "spawned":
+        repository, head = ensure_repository_matches(ledger)
+        ledger["recovery"] = {
+            "phase": in_flight["phase"],
+            "failure": {"code": "stale-in-flight", "message": "Runner 退出时 Claude 调用仍在进行"},
+            "snapshot": recovery_snapshot(repository, head),
+        }
+    else:
+        ledger["in_flight"] = None
+        ledger["gate_failures"] = []
+        acquire_run_lock(common, lifecycle_lock_payload(ledger))
+        write_ledger(path, ledger)
+        return
     ledger["state"] = "interrupted"
     ledger["interrupted_at"] = datetime.now(timezone.utc).isoformat()
     ledger["gate_failures"] = [{"code": "stale-run-lock", "message": "检测到已退出进程遗留的仓库锁"}]
     write_ledger(path, ledger)
 
 
-def abort_command(args: argparse.Namespace) -> dict[str, object]:
-    path, ledger = load_ledger(args.run)
+def finish_abort(path: Path, ledger: dict[str, object]) -> dict[str, object]:
     if ledger["state"] == "completed":
         raise PlanError("run-already-completed", "已完成的 Loop Run 无需 abort")
     ledger["state"] = "aborted"
+    ledger["in_flight"] = None
     ledger["aborted_at"] = datetime.now(timezone.utc).isoformat()
     write_ledger(path, ledger)
     release_run_lock(ledger)
     return public_run(ledger, "abort")
 
 
-def reopen_command(args: argparse.Namespace) -> dict[str, object]:
+def abort_command(args: argparse.Namespace) -> dict[str, object]:
+    path, snapshot = load_ledger(args.run)
+    common = Path(str(snapshot["git_common_directory"]))
+    try:
+        with command_lock(common):
+            return finish_abort(path, load_ledger(args.run)[1])
+    except PlanError as error:
+        if error.code != "run-active":
+            raise
+    lock = read_run_lock(common)
+    if lock.get("run_id") != snapshot["run_id"] or lock.get("lock_id") != snapshot.get("lock_id"):
+        raise PlanError("run-lock-mismatch", "仓库锁不属于当前 Loop Run")
+    terminate_process_group(lock.get("child_pgid"), lock.get("child_pid"))
+    with command_lock(common, blocking=True):
+        return finish_abort(path, load_ledger(args.run)[1])
+
+
+def reopen_command_locked(args: argparse.Namespace) -> dict[str, object]:
     path, ledger = load_ledger(args.run)
+    ensure_current_ledger(ledger)
     if ledger["state"] not in {"interrupted", "terminal-failure", "aborted"}:
         raise PlanError("run-not-reopenable", "Loop Run 当前不允许 reopen")
+    if ledger.get("terminal_reason") == "claude-session-mismatch":
+        raise PlanError("run-not-reopenable", "Session 身份不可信的 Loop Run 不允许 reopen")
     repository, head = ensure_repository_matches(ledger)
     ensure_no_git_operation(repository)
     start = str(ledger["ticket_start_head"])
     if run_git(repository, "merge-base", "--is-ancestor", start, head, check=False).returncode:
         raise PlanError("history-rewritten", "工单起始 HEAD 不再是当前 HEAD 的祖先")
     recovery = ledger.get("recovery")
-    if isinstance(recovery, dict) and recovery_snapshot(repository, head) != recovery.get("snapshot"):
-        raise PlanError("recovery-context-drift", "Git 现场已在失败后发生变化，无法安全 reopen")
-    if not ledger.get("session_id") or not ledger.get("claude_calls"):
-        raise PlanError("session-unavailable", "原 Task Session 没有可验证的调用记录，拒绝创建新 Session 接管")
+    if isinstance(recovery, dict):
+        current_snapshot = recovery_snapshot(repository, head)
+        if recovery.get("snapshot") is None and recovery.get("requires_resume") is True:
+            recovery["snapshot"] = current_snapshot
+        elif current_snapshot != recovery.get("snapshot"):
+            raise PlanError("recovery-context-drift", "Git 现场已在失败后发生变化，无法安全 reopen")
+    in_flight = ledger.get("in_flight")
+    started_in_flight = isinstance(in_flight, dict) and in_flight.get("state") == "spawned"
+    if not ledger.get("session_id") or (not ledger.get("claude_calls") and not started_in_flight):
+        raise PlanError("session-unavailable", "原 Task Session 没有可验证的启动记录，拒绝创建新 Session 接管")
+    ledger["lock_id"] = str(uuid.uuid4())
     acquire_run_lock(
         Path(str(ledger["git_common_directory"])),
-        {
-            "schema_version": SCHEMA_VERSION,
-            "pid": os.getpid(),
-            "active_pid": None,
-            "run_id": ledger["run_id"],
-            "started_at": datetime.now(timezone.utc).isoformat(),
-            "repository": ledger["repository"],
-            "git_common_directory": ledger["git_common_directory"],
-            "branch": ledger["branch"],
-        },
+        lifecycle_lock_payload(ledger),
     )
     ledger["state"] = "running"
     ledger["reopened_at"] = datetime.now(timezone.utc).isoformat()
@@ -1415,7 +1697,13 @@ def reopen_command(args: argparse.Namespace) -> dict[str, object]:
     return public_run(ledger, "reopen")
 
 
-def clean_command(args: argparse.Namespace) -> dict[str, object]:
+def reopen_command(args: argparse.Namespace) -> dict[str, object]:
+    _, snapshot = load_ledger(args.run)
+    with command_lock(Path(str(snapshot["git_common_directory"]))):
+        return reopen_command_locked(args)
+
+
+def clean_command_locked(args: argparse.Namespace) -> dict[str, object]:
     path, ledger = load_ledger(args.run)
     if ledger["state"] not in {"completed", "aborted"}:
         raise PlanError("run-not-terminal", "只有 completed 或 aborted Loop Run 可以 clean")
@@ -1433,6 +1721,12 @@ def clean_command(args: argparse.Namespace) -> dict[str, object]:
         "command": "clean",
         "run_id": ledger["run_id"],
     }
+
+
+def clean_command(args: argparse.Namespace) -> dict[str, object]:
+    _, snapshot = load_ledger(args.run)
+    with command_lock(Path(str(snapshot["git_common_directory"]))):
+        return clean_command_locked(args)
 
 
 def status_command(args: argparse.Namespace) -> dict[str, object]:
@@ -1517,6 +1811,8 @@ def emit(payload: dict[str, object]) -> None:
 
 
 def main() -> int:
+    if len(sys.argv) >= 2 and sys.argv[1] == "__child-launcher":
+        return child_launcher()
     command = "unknown"
     try:
         args = parser().parse_args()
