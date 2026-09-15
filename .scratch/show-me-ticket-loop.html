@@ -1,0 +1,729 @@
+<title>Ticket Loop 运行手册</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&display=swap">
+<style>
+:root {
+  --bg: #f4f7f9;
+  --paper: #ffffff;
+  --paper-2: #eaf0f4;
+  --ink: #13232c;
+  --muted: #536873;
+  --line: #bfd0d8;
+  --line-strong: #7f9aa7;
+  --navy: #173b4b;
+  --cyan: #087f8c;
+  --cyan-soft: #d9f0f1;
+  --amber: #b86b08;
+  --amber-soft: #fff0d2;
+  --red: #b43c35;
+  --red-soft: #fce3df;
+  --green: #327653;
+  --green-soft: #dff0e7;
+  --code-bg: #10252f;
+  --code-ink: #eaf5f7;
+  --shadow: 0 12px 34px rgba(23, 59, 75, .09);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0b171d;
+    --paper: #12242d;
+    --paper-2: #192f39;
+    --ink: #e8f1f3;
+    --muted: #a4b8c1;
+    --line: #304c58;
+    --line-strong: #607e89;
+    --navy: #b9dce5;
+    --cyan: #6bcbd0;
+    --cyan-soft: #17383e;
+    --amber: #f2b85b;
+    --amber-soft: #3c2d15;
+    --red: #f08a80;
+    --red-soft: #402421;
+    --green: #7bc89b;
+    --green-soft: #19382a;
+    --code-bg: #071117;
+    --code-ink: #e9f5f7;
+    --shadow: 0 14px 36px rgba(0, 0, 0, .24);
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0b171d;
+  --paper: #12242d;
+  --paper-2: #192f39;
+  --ink: #e8f1f3;
+  --muted: #a4b8c1;
+  --line: #304c58;
+  --line-strong: #607e89;
+  --navy: #b9dce5;
+  --cyan: #6bcbd0;
+  --cyan-soft: #17383e;
+  --amber: #f2b85b;
+  --amber-soft: #3c2d15;
+  --red: #f08a80;
+  --red-soft: #402421;
+  --green: #7bc89b;
+  --green-soft: #19382a;
+  --code-bg: #071117;
+  --code-ink: #e9f5f7;
+  --shadow: 0 14px 36px rgba(0, 0, 0, .24);
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  padding-inline: clamp(16px, 4vw, 56px);
+  padding-block: 0 64px;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: "IBM Plex Sans", "Noto Sans SC", system-ui, sans-serif;
+  font-size: 16px;
+  line-height: 1.68;
+}
+a { color: var(--cyan); text-underline-offset: 3px; }
+a:focus-visible, summary:focus-visible { outline: 3px solid var(--amber); outline-offset: 4px; border-radius: 2px; }
+.shell { width: min(1320px, 100%); margin: 0 auto; }
+.masthead {
+  padding-block: clamp(36px, 7vw, 92px) 36px;
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(250px, .75fr);
+  gap: clamp(28px, 6vw, 80px);
+  align-items: end;
+  border-bottom: 1px solid var(--line-strong);
+}
+.eyebrow, .kicker, .fig-label {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: .73rem;
+  line-height: 1.4;
+  letter-spacing: .11em;
+  text-transform: uppercase;
+  color: var(--cyan);
+  font-weight: 600;
+}
+h1, h2, h3 { color: var(--navy); text-wrap: balance; }
+h1 { font-size: clamp(2.65rem, 7vw, 6.1rem); line-height: .94; letter-spacing: -.055em; margin: 12px 0 18px; max-width: 11ch; }
+.deck { font-size: clamp(1.05rem, 2vw, 1.28rem); line-height: 1.55; max-width: 60ch; color: var(--muted); margin: 0; }
+.run-id {
+  border-left: 4px solid var(--amber);
+  padding-left: 18px;
+  display: grid;
+  gap: 8px;
+}
+.run-id strong { font-size: 1.15rem; color: var(--navy); }
+.run-id span { color: var(--muted); font-size: .9rem; }
+.layout { display: grid; grid-template-columns: 218px minmax(0, 1fr); gap: clamp(28px, 5vw, 72px); align-items: start; }
+.toc { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 20px); padding-block: 34px; }
+.toc p { margin: 0 0 14px; }
+.toc a { display: block; color: var(--muted); text-decoration: none; padding: 6px 0; border-bottom: 1px solid transparent; font-size: .86rem; }
+.toc a:hover { color: var(--ink); border-color: var(--line); }
+article { min-width: 0; padding-top: 42px; }
+section { padding-block: 14px 58px; scroll-margin-top: 24px; }
+h2 { font-size: clamp(1.85rem, 4vw, 3rem); line-height: 1.08; letter-spacing: -.035em; margin: 0 0 22px; }
+h3 { font-size: 1.18rem; line-height: 1.25; margin: 34px 0 12px; }
+p { max-width: 70ch; }
+.lead { font-size: 1.13rem; color: var(--muted); max-width: 68ch; }
+.rule-title { display: flex; gap: 14px; align-items: baseline; }
+.rule-title .num { font: 600 .78rem "IBM Plex Mono", monospace; color: var(--amber); }
+.summary-strip {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  background: var(--navy);
+  color: var(--bg);
+  box-shadow: var(--shadow);
+}
+.summary-strip > div { padding: 20px; border-right: 1px solid color-mix(in srgb, var(--bg) 25%, transparent); }
+.summary-strip > div:last-child { border-right: 0; }
+.summary-strip strong { display: block; font: 600 clamp(1.3rem, 3vw, 2rem) "IBM Plex Mono", monospace; }
+.summary-strip span { display: block; opacity: .78; font-size: .8rem; margin-top: 4px; }
+.callout { margin: 26px 0; padding: 20px 22px; border-left: 4px solid var(--cyan); background: var(--cyan-soft); max-width: 76ch; }
+.callout.warning { border-color: var(--amber); background: var(--amber-soft); }
+.callout.danger { border-color: var(--red); background: var(--red-soft); }
+.callout.good { border-color: var(--green); background: var(--green-soft); }
+.callout strong { color: var(--navy); }
+.callout p { margin: 6px 0 0; }
+pre {
+  margin: 18px 0;
+  padding: 20px 22px;
+  overflow-x: auto;
+  border-radius: 3px;
+  background: var(--code-bg);
+  color: var(--code-ink);
+  font: 500 .86rem/1.65 "IBM Plex Mono", monospace;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.06);
+}
+code { font-family: "IBM Plex Mono", monospace; font-size: .9em; }
+p code, li code, td code { color: var(--cyan); background: var(--cyan-soft); padding: .12em .35em; border-radius: 2px; overflow-wrap: anywhere; }
+.command-label { margin-top: 26px; font: 600 .72rem "IBM Plex Mono", monospace; letter-spacing: .08em; color: var(--muted); text-transform: uppercase; }
+.figure { margin: 28px 0; padding: clamp(16px, 3vw, 28px); background: var(--paper); border: 1px solid var(--line); box-shadow: var(--shadow); overflow-x: auto; }
+.figure svg { display: block; width: 100%; min-width: 650px; height: auto; color: var(--ink); }
+.figure figcaption { margin-top: 16px; color: var(--muted); font-size: .88rem; max-width: 76ch; }
+.flow-node { fill: var(--paper-2); stroke: var(--line-strong); stroke-width: 1.5; }
+.flow-node.active { fill: var(--cyan-soft); stroke: var(--cyan); stroke-width: 2; }
+.flow-node.warn { fill: var(--amber-soft); stroke: var(--amber); }
+.flow-node.fail { fill: var(--red-soft); stroke: var(--red); }
+.flow-text { fill: var(--ink); font-family: "IBM Plex Sans", "Noto Sans SC", sans-serif; font-size: 13px; font-weight: 600; }
+.flow-small { fill: var(--muted); font-family: "IBM Plex Mono", monospace; font-size: 10px; }
+.flow-line { fill: none; stroke: var(--line-strong); stroke-width: 1.6; marker-end: url(#arrow); }
+.flow-line.accent { stroke: var(--cyan); stroke-width: 2.2; }
+.flow-line.dashed { stroke-dasharray: 5 5; }
+.steps { display: grid; gap: 0; border-top: 1px solid var(--line-strong); }
+.step { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 18px; padding: 22px 0; border-bottom: 1px solid var(--line); }
+.step-no { font: 600 .82rem "IBM Plex Mono", monospace; color: var(--amber); }
+.step h3 { margin: 0 0 4px; }
+.step p { margin: 0; color: var(--muted); }
+.matrix-wrap { overflow-x: auto; margin: 20px 0; }
+table { width: 100%; border-collapse: collapse; min-width: 680px; font-size: .9rem; font-variant-numeric: tabular-nums; }
+th { text-align: left; font: 600 .72rem "IBM Plex Mono", monospace; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); border-bottom: 2px solid var(--line-strong); padding: 11px 12px; }
+td { vertical-align: top; border-bottom: 1px solid var(--line); padding: 12px; }
+.badge { display: inline-block; font: 600 .72rem "IBM Plex Mono", monospace; padding: 4px 8px; border-radius: 999px; white-space: nowrap; }
+.badge.run { color: var(--cyan); background: var(--cyan-soft); }
+.badge.stop { color: var(--red); background: var(--red-soft); }
+.badge.done { color: var(--green); background: var(--green-soft); }
+.badge.manual { color: var(--amber); background: var(--amber-soft); }
+.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 26px; }
+.pane { padding-top: 14px; border-top: 3px solid var(--line-strong); }
+.pane h3 { margin-top: 0; }
+ul, ol { padding-left: 1.25rem; max-width: 72ch; }
+li + li { margin-top: 7px; }
+.ref { font: 500 .76rem/1.5 "IBM Plex Mono", monospace; color: var(--muted); overflow-wrap: anywhere; }
+details { border-top: 1px solid var(--line); }
+summary { cursor: pointer; padding: 16px 0; color: var(--navy); font-weight: 600; }
+details > div { padding: 0 0 18px 20px; color: var(--muted); }
+.footer { border-top: 1px solid var(--line-strong); padding-top: 26px; display: flex; justify-content: space-between; gap: 20px; flex-wrap: wrap; color: var(--muted); font-size: .8rem; }
+@media (max-width: 850px) {
+  .masthead { grid-template-columns: 1fr; }
+  .layout { grid-template-columns: 1fr; }
+  .toc { position: static; padding-block: 22px 0; columns: 2; }
+  .toc p { column-span: all; }
+  article { padding-top: 24px; }
+  .summary-strip { grid-template-columns: 1fr 1fr; }
+  .summary-strip > div:nth-child(2) { border-right: 0; }
+  .summary-strip > div:nth-child(-n+2) { border-bottom: 1px solid color-mix(in srgb, var(--bg) 25%, transparent); }
+  .two-col { grid-template-columns: 1fr; }
+}
+@media (max-width: 480px) {
+  .toc { columns: 1; }
+  .summary-strip { grid-template-columns: 1fr; }
+  .summary-strip > div { border-right: 0; border-bottom: 1px solid color-mix(in srgb, var(--bg) 25%, transparent); }
+  .step { grid-template-columns: 42px minmax(0,1fr); gap: 10px; }
+}
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+</style>
+
+<div class="shell">
+  <header class="masthead">
+    <div>
+      <div class="eyebrow">felix-skills / operational guide</div>
+      <h1>Ticket Loop 运行手册</h1>
+      <p class="deck">从本地 Markdown 工单链到可恢复的 Claude Code 执行循环：如何启动、观察、恢复，以及 Git、Session、Ledger 三重门禁如何确保“一票一票地完成”。</p>
+    </div>
+    <div class="run-id">
+      <span>实现基线</span>
+      <strong>协议 1.0 · Ledger 1.1</strong>
+      <span>插件版本 0.1.12 · macOS / Linux</span>
+      <span>代码审阅日期：2026-09-15</span>
+    </div>
+  </header>
+
+  <div class="layout">
+    <nav class="toc" aria-label="报告目录">
+      <p class="kicker">目录</p>
+      <a href="#overview">一句话理解</a>
+      <a href="#quickstart">快速使用</a>
+      <a href="#tickets">工单格式</a>
+      <a href="#control-flow">运行机制</a>
+      <a href="#state-machine">状态机</a>
+      <a href="#gates">完成门禁</a>
+      <a href="#persistence">持久化与恢复</a>
+      <a href="#operations">运维命令</a>
+      <a href="#claude-session">Claude Session 与无人值守</a>
+      <a href="#security">安全边界</a>
+      <a href="#limits">限制与易错点</a>
+      <a href="#files">文件索引</a>
+    </nav>
+
+    <article>
+      <section id="overview">
+        <div class="rule-title"><span class="num">00</span><h2>一句话理解</h2></div>
+        <p class="lead">Ticket Loop 是一个<strong>串行、可审计、可恢复</strong>的本地工单执行器。它冻结一组 Markdown 工单，按依赖选择下一张票，为每张票创建独立 Claude Code Session，并用 Git 与工单证据而不是模型自述判断是否完成。</p>
+        <div class="summary-strip" role="list" aria-label="核心特征">
+          <div role="listitem"><strong>1 ×</strong><span>任一时刻仅执行一张票</span></div>
+          <div role="listitem"><strong>2</strong><span>implementation / closeout 两阶段</span></div>
+          <div role="listitem"><strong>2 ×</strong><span>每阶段最多两次 resume</span></div>
+          <div role="listitem"><strong>74</strong><span>当前测试方法数量</span></div>
+        </div>
+        <div class="callout good">
+          <strong>核心可靠性原则</strong>
+          <p>Claude 返回退出码 0 或文本声称“已完成”都不算完成。只有分支、提交历史、工作区、Checklist、Status 与 Completion evidence 全部通过硬校验，调度器才会进入下一张票。</p>
+        </div>
+        <p class="ref">实现入口：plugins/felix-skills/skills/ticket-loop/scripts/ticket_loop.py:1366-1498</p>
+      </section>
+
+      <section id="quickstart">
+        <div class="rule-title"><span class="num">01</span><h2>快速使用</h2></div>
+        <h3>安装插件</h3>
+        <pre><code>/plugin marketplace add fcdtc/felix-plugins
+/plugin install felix-skills@felix</code></pre>
+        <h3>一键运行 Supervisor</h3>
+        <div class="command-label">按目录选择全部合法 Task Ticket</div>
+        <pre><code>/felix-skills:ticket-loop --issues-dir .scratch/my-feature/issues</code></pre>
+        <div class="command-label">仅运行编号范围</div>
+        <pre><code>/felix-skills:ticket-loop \
+  --issues-dir .scratch/my-feature/issues \
+  --range 01-07</code></pre>
+        <div class="command-label">显式指定工单</div>
+        <pre><code>/felix-skills:ticket-loop \
+  --tickets .scratch/my-feature/issues/01-foundation.md \
+            .scratch/my-feature/issues/02-api.md</code></pre>
+        <div class="callout">
+          <strong>Supervisor 做什么？</strong>
+          <p>固定执行 <code>plan → start → step/resume</code>，持续到 <code>completed</code> 或终止状态。每轮严格服从 Runner 返回的 <code>allowed_actions</code>，不会自行猜测下一步。</p>
+        </div>
+        <h3>常用参数</h3>
+        <div class="matrix-wrap">
+          <table>
+            <thead><tr><th>参数</th><th>用途</th><th>默认 / 约束</th></tr></thead>
+            <tbody>
+              <tr><td><code>--model</code></td><td>指定 Claude 模型</td><td>省略时继承用户 Claude Code 配置</td></tr>
+              <tr><td><code>--implement-command</code></td><td>覆盖实现 Skill 名称</td><td>自动寻找 namespaced <code>implement</code>，找不到回退为 <code>implement</code></td></tr>
+              <tr><td><code>--implementation-timeout</code></td><td>首次实现调用超时</td><td>5400 秒</td></tr>
+              <tr><td><code>--closeout-timeout</code></td><td>首次收口调用超时</td><td>1800 秒</td></tr>
+              <tr><td><code>--resume-timeout</code></td><td>恢复调用超时</td><td>1800 秒</td></tr>
+              <tr><td><code>--max-cost-usd</code></td><td>下一次调用前的累计成本门限</td><td>正数；不是单次调用硬上限</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="ref">安装：README.md:17-27 · Skill：plugins/felix-skills/skills/ticket-loop/SKILL.md:1-58 · Supervisor：scripts/supervise.py:90-131</p>
+      </section>
+
+      <section id="tickets">
+        <div class="rule-title"><span class="num">02</span><h2>工单必须长什么样</h2></div>
+        <p>文件名必须是两位编号 <code>01</code>–<code>99</code> 开头；Task Ticket 至少包含三个字段。依赖只从 <code>Blocked by</code> 字段解析，不从正文推断。</p>
+        <pre><code># 02 — Add API client
+
+**What to build:**
+实现 API client，并添加单元测试。
+
+**Blocked by:** 01-foundation.md
+
+**Status:** ready-for-agent
+
+## Acceptance checklist
+- [ ] Client handles success responses
+- [ ] Client handles timeout errors
+- [ ] Typecheck passes</code></pre>
+        <div class="two-col">
+          <div class="pane">
+            <h3>可执行 Task Ticket</h3>
+            <ul>
+              <li>文件名匹配 <code>01-title.md</code></li>
+              <li><code>Status</code> 为 <code>ready-for-agent</code> 或合法 <code>done (...)</code></li>
+              <li><code>Blocked by: None</code> 或引用存在的工单</li>
+              <li>不得有重复 ID、自依赖或依赖环</li>
+            </ul>
+          </div>
+          <div class="pane">
+            <h3>Wayfinder 只作为依赖</h3>
+            <ul>
+              <li>只要存在 <code>Type:</code>，即被分类为 Wayfinder</li>
+              <li>允许类型：<code>research</code>、<code>prototype</code>、<code>grilling</code>、<code>task</code></li>
+              <li>状态仅接受 <code>claimed</code> / <code>resolved</code></li>
+              <li>即使 <code>Type: task</code> 也不能被 <code>--tickets</code> 执行</li>
+            </ul>
+          </div>
+        </div>
+        <div class="callout warning">
+          <strong>Plan 成功不等于可启动</strong>
+          <p>外部 blocker 尚未完成时，<code>plan</code> 仍可成功但 <code>frontier</code> 为 <code>null</code>；真正 <code>start</code> 时会以 <code>frontier-empty</code> 拒绝运行。</p>
+        </div>
+        <p class="ref">解析与依赖图：ticket_loop.py:104-355 · 文件名正则：ticket_loop.py:53 · 外部 blocker：ticket_loop.py:303-327</p>
+      </section>
+
+      <section id="control-flow">
+        <div class="rule-title"><span class="num">03</span><h2>运行机制</h2></div>
+        <p class="lead">Supervisor 是薄控制层，Runner 才是事实来源。Runner 冻结 Manifest、维护 Ledger、启动 Claude 子进程，并在每次调用后执行确定性门禁。</p>
+        <figure class="figure">
+          <div class="fig-label">运行时控制流</div>
+          <svg viewBox="0 0 920 360" role="img" aria-label="Ticket Loop 从用户、Supervisor、Runner 到 Claude、Git 与 Ledger 的控制流">
+            <defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="currentColor"></path></marker></defs>
+            <rect class="flow-node" x="20" y="134" width="120" height="64" rx="4"></rect>
+            <text class="flow-text" x="80" y="160" text-anchor="middle">用户</text>
+            <text class="flow-small" x="80" y="179" text-anchor="middle">/ticket-loop</text>
+            <rect class="flow-node active" x="190" y="112" width="150" height="108" rx="4"></rect>
+            <text class="flow-text" x="265" y="147" text-anchor="middle">Supervisor</text>
+            <text class="flow-small" x="265" y="168" text-anchor="middle">plan → start</text>
+            <text class="flow-small" x="265" y="186" text-anchor="middle">step / resume</text>
+            <rect class="flow-node active" x="400" y="112" width="150" height="108" rx="4"></rect>
+            <text class="flow-text" x="475" y="147" text-anchor="middle">Runner</text>
+            <text class="flow-small" x="475" y="168" text-anchor="middle">状态机 + 门禁</text>
+            <text class="flow-small" x="475" y="186" text-anchor="middle">每步最多调用一次</text>
+            <rect class="flow-node" x="630" y="20" width="190" height="68" rx="4"></rect>
+            <text class="flow-text" x="725" y="48" text-anchor="middle">Claude Code Session</text>
+            <text class="flow-small" x="725" y="68" text-anchor="middle">实现 / 收口 / 恢复</text>
+            <rect class="flow-node" x="630" y="132" width="190" height="68" rx="4"></rect>
+            <text class="flow-text" x="725" y="160" text-anchor="middle">Git 工作区</text>
+            <text class="flow-small" x="725" y="180" text-anchor="middle">HEAD · status · history</text>
+            <rect class="flow-node" x="630" y="244" width="190" height="68" rx="4"></rect>
+            <text class="flow-text" x="725" y="272" text-anchor="middle">Ledger + Logs</text>
+            <text class="flow-small" x="725" y="292" text-anchor="middle">原子持久化 · 审计</text>
+            <path class="flow-line accent" d="M140 166 H190"></path>
+            <text class="flow-small" x="165" y="154" text-anchor="middle">启动</text>
+            <path class="flow-line accent" d="M340 166 H400"></path>
+            <text class="flow-small" x="370" y="154" text-anchor="middle">JSON</text>
+            <path class="flow-line" d="M550 138 C585 138 584 54 630 54"></path>
+            <text class="flow-small" x="584" y="78">spawn / resume</text>
+            <path class="flow-line" d="M550 166 H630"></path>
+            <text class="flow-small" x="590" y="154" text-anchor="middle">校验</text>
+            <path class="flow-line" d="M550 194 C585 194 584 278 630 278"></path>
+            <text class="flow-small" x="585" y="260">写账本</text>
+            <path class="flow-line dashed" d="M630 74 C586 88 584 116 550 128"></path>
+            <text class="flow-small" x="583" y="105">结果 JSON</text>
+          </svg>
+          <figcaption>控制权始终回到 Runner：Claude 负责执行，Runner 负责判断。Supervisor 只根据公开协议中的 <code>allowed_actions</code> 驱动下一步。</figcaption>
+        </figure>
+        <div class="steps">
+          <div class="step"><div class="step-no">01</div><div><h3>Plan：解析并冻结</h3><p>检查工单格式、依赖、外部 blocker，生成 Manifest；此阶段不调用 Claude。</p></div></div>
+          <div class="step"><div class="step-no">02</div><div><h3>Start：建立运行上下文</h3><p>验证 Git 仓库、分支、干净工作区和锁，记录起始 HEAD、运行参数与第一张 frontier ticket。</p></div></div>
+          <div class="step"><div class="step-no">03</div><div><h3>Implementation：新 Session</h3><p>为工单生成 UUID，首次 prompt 严格为 <code>/&lt;implement-command&gt; @&lt;绝对工单路径&gt;</code>。</p></div></div>
+          <div class="step"><div class="step-no">04</div><div><h3>Closeout：复用同一 Session</h3><p>要求校验 Checklist、写 Status 和 Completion evidence；必要时仅允许一个精确命名的收口提交。</p></div></div>
+          <div class="step"><div class="step-no">05</div><div><h3>Advance：选择下一张票</h3><p>从 Manifest 中选择编号最小、依赖全部满足的 ready ticket；运行中新增的文件不会被吸收。</p></div></div>
+        </div>
+        <p class="ref">Manifest/start：ticket_loop.py:726-968 · Claude 调用：ticket_loop.py:1044-1069 · 调度：ticket_loop.py:741-841</p>
+      </section>
+
+      <section id="state-machine">
+        <div class="rule-title"><span class="num">04</span><h2>状态机与允许动作</h2></div>
+        <figure class="figure">
+          <div class="fig-label">公开状态转换</div>
+          <svg viewBox="0 0 920 410" role="img" aria-label="Ticket Loop 从 running 到 completed、interrupted、terminal-failure 和 aborted 的状态转换">
+            <defs><marker id="arrow2" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="currentColor"></path></marker></defs>
+            <rect class="flow-node active" x="350" y="38" width="220" height="72" rx="4"></rect>
+            <text class="flow-text" x="460" y="67" text-anchor="middle">running</text>
+            <text class="flow-small" x="460" y="90" text-anchor="middle">step 或 resume · status · abort</text>
+            <rect class="flow-node" x="36" y="218" width="190" height="76" rx="4"></rect>
+            <text class="flow-text" x="131" y="248" text-anchor="middle">completed</text>
+            <text class="flow-small" x="131" y="272" text-anchor="middle">status · clean</text>
+            <rect class="flow-node warn" x="260" y="218" width="190" height="76" rx="4"></rect>
+            <text class="flow-text" x="355" y="248" text-anchor="middle">interrupted</text>
+            <text class="flow-small" x="355" y="272" text-anchor="middle">reopen · status · abort</text>
+            <rect class="flow-node fail" x="484" y="218" width="190" height="76" rx="4"></rect>
+            <text class="flow-text" x="579" y="248" text-anchor="middle">terminal-failure</text>
+            <text class="flow-small" x="579" y="272" text-anchor="middle">reopen* · status · abort</text>
+            <rect class="flow-node fail" x="708" y="218" width="176" height="76" rx="4"></rect>
+            <text class="flow-text" x="796" y="248" text-anchor="middle">aborted</text>
+            <text class="flow-small" x="796" y="272" text-anchor="middle">status · clean</text>
+            <path d="M400 110 C320 160 220 170 160 218" fill="none" stroke="var(--green)" stroke-width="2" marker-end="url(#arrow2)"></path>
+            <text class="flow-small" x="270" y="164" text-anchor="middle">全部工单通过</text>
+            <path d="M440 110 C410 160 380 170 360 218" fill="none" stroke="var(--amber)" stroke-width="2" marker-end="url(#arrow2)"></path>
+            <text class="flow-small" x="402" y="158" text-anchor="middle">信号 / stale child</text>
+            <path d="M490 110 C520 160 550 170 574 218" fill="none" stroke="var(--red)" stroke-width="2" marker-end="url(#arrow2)"></path>
+            <text class="flow-small" x="536" y="158" text-anchor="middle">不可安全继续</text>
+            <path d="M540 110 C650 150 740 166 782 218" fill="none" stroke="var(--red)" stroke-width="2" marker-end="url(#arrow2)"></path>
+            <text class="flow-small" x="685" y="158" text-anchor="middle">用户 abort</text>
+            <path d="M355 218 C330 140 356 110 410 98" fill="none" stroke="var(--amber)" stroke-width="1.6" stroke-dasharray="5 5" marker-end="url(#arrow2)"></path>
+            <path d="M579 218 C600 145 560 112 510 99" fill="none" stroke="var(--amber)" stroke-width="1.6" stroke-dasharray="5 5" marker-end="url(#arrow2)"></path>
+            <text class="flow-small" x="463" y="350" text-anchor="middle">* claude-session-mismatch 禁止 reopen；身份不可信时只能 status / abort</text>
+          </svg>
+          <figcaption>普通可恢复 gate failure 不离开 <code>running</code>，但动作会从 <code>step</code> 切换为 <code>resume</code>。Supervisor 不会自动 <code>reopen</code> interrupted 或 terminal-failure。</figcaption>
+        </figure>
+        <div class="matrix-wrap">
+          <table>
+            <thead><tr><th>状态 / 条件</th><th>允许动作</th><th>自动行为</th></tr></thead>
+            <tbody>
+              <tr><td><span class="badge run">running</span> 正常</td><td><code>step</code>、<code>status</code>、<code>abort</code></td><td>Supervisor 继续 step</td></tr>
+              <tr><td><span class="badge manual">running + recovery</span></td><td><code>resume</code>、<code>status</code>、<code>abort</code></td><td>Supervisor 自动 resume</td></tr>
+              <tr><td><span class="badge done">completed</span></td><td><code>status</code>、<code>clean</code></td><td>停止</td></tr>
+              <tr><td><span class="badge manual">interrupted</span></td><td><code>reopen</code>、<code>status</code>、<code>abort</code></td><td>Supervisor 停止，需人工处理</td></tr>
+              <tr><td><span class="badge stop">terminal-failure</span></td><td>通常为 <code>reopen</code>、<code>status</code>、<code>abort</code></td><td>Supervisor 停止</td></tr>
+              <tr><td><span class="badge stop">aborted</span></td><td><code>status</code>、<code>clean</code></td><td>停止</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="ref">allowed actions：ticket_loop.py:682-698 · Supervisor 决策：supervise.py:106-129</p>
+      </section>
+
+      <section id="gates">
+        <div class="rule-title"><span class="num">05</span><h2>两阶段完成门禁</h2></div>
+        <div class="two-col">
+          <div class="pane">
+            <div class="kicker">Phase A</div>
+            <h3>Implementation 必须证明代码已落地</h3>
+            <ol>
+              <li>Claude 返回的 <code>session_id</code> 同时匹配 Ledger 和当前 ticket 映射。</li>
+              <li>工作区完全干净。</li>
+              <li>HEAD 相比 ticket start HEAD 前进。</li>
+              <li>ticket start HEAD 仍是当前 HEAD 的祖先，历史未被改写。</li>
+            </ol>
+            <p>通过后，Runner 记录 <code>implementation_head</code>，进入 closeout。</p>
+          </div>
+          <div class="pane">
+            <div class="kicker">Phase B</div>
+            <h3>Closeout 必须证明工单已收口</h3>
+            <ol>
+              <li>所有 Acceptance checklist 均已勾选。</li>
+              <li>Status 为 <code>done (日期, implementation commit)</code>。</li>
+              <li>恰好一个 Completion evidence，包含 Implementation、Typecheck、Tests、Review。</li>
+              <li>若有收口提交，只能新增一个，且主题精确为 <code>chore(ticket-loop): close &lt;ticket-id&gt;</code>。</li>
+              <li>收口提交只能修改当前 ticket。</li>
+            </ol>
+          </div>
+        </div>
+        <div class="callout warning">
+          <strong>证据文本也会被校验</strong>
+          <p><code>Not applicable</code> 必须附括号原因；evidence 中未被否定解释的 <code>fail</code>、<code>error</code>、<code>broken</code> 等失败词会导致拒绝。</p>
+        </div>
+        <p class="ref">Implementation gates：ticket_loop.py:1214-1223 · Closeout gates：ticket_loop.py:1226-1300</p>
+      </section>
+
+      <section id="persistence">
+        <div class="rule-title"><span class="num">06</span><h2>持久化、锁与崩溃恢复</h2></div>
+        <h3>运行数据放在哪里</h3>
+        <pre><code>.ticket-loop/
+├── runs/&lt;run-id&gt;.json                 # Ledger：状态、HEAD、尝试、成本、恢复快照
+└── logs/&lt;run-id&gt;/
+    ├── &lt;NN&gt;-&lt;phase&gt;.json              # Claude 原始 stdout
+    └── &lt;NN&gt;-&lt;phase&gt;.stderr.log        # Claude stderr
+
+&lt;git-common-dir&gt;/ticket-loop/
+├── command.lock                       # mutation command 的 flock
+└── lock.json                          # 当前 run 的所有权与 PID/PGID</code></pre>
+        <p>Runner 将 <code>.ticket-loop/</code> 写入 Git 的本地 <code>info/exclude</code>，不会修改项目 <code>.gitignore</code>。Ledger 使用临时文件、<code>fsync</code> 和原子 replace 写入；目录权限为 <code>0700</code>，文件为 <code>0600</code>。</p>
+        <figure class="figure">
+          <div class="fig-label">进程启动事务</div>
+          <svg viewBox="0 0 920 270" role="img" aria-label="Ticket Loop 用 launcher 和控制管道缩小 Claude 已启动但账本未记录的窗口">
+            <defs><marker id="arrow3" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="currentColor"></path></marker></defs>
+            <rect class="flow-node active" x="24" y="82" width="150" height="76" rx="4"></rect>
+            <text class="flow-text" x="99" y="112" text-anchor="middle">Runner</text>
+            <text class="flow-small" x="99" y="136" text-anchor="middle">创建 control pipe</text>
+            <rect class="flow-node" x="230" y="82" width="170" height="76" rx="4"></rect>
+            <text class="flow-text" x="315" y="112" text-anchor="middle">Child launcher</text>
+            <text class="flow-small" x="315" y="136" text-anchor="middle">已知 PID / PGID，等待</text>
+            <rect class="flow-node active" x="456" y="42" width="180" height="76" rx="4"></rect>
+            <text class="flow-text" x="546" y="72" text-anchor="middle">Ledger + Lock</text>
+            <text class="flow-small" x="546" y="96" text-anchor="middle">in_flight = spawned</text>
+            <rect class="flow-node" x="696" y="82" width="190" height="76" rx="4"></rect>
+            <text class="flow-text" x="791" y="112" text-anchor="middle">exec Claude</text>
+            <text class="flow-small" x="791" y="136" text-anchor="middle">真正开始模型调用</text>
+            <path class="flow-line accent" d="M174 120 H230"></path>
+            <text class="flow-small" x="202" y="107" text-anchor="middle">fork</text>
+            <path class="flow-line accent" d="M400 103 C425 103 430 80 456 80"></path>
+            <text class="flow-small" x="429" y="68" text-anchor="middle">先持久化</text>
+            <path class="flow-line accent" d="M636 80 C670 80 666 120 696 120"></path>
+            <text class="flow-small" x="666" y="68" text-anchor="middle">再放行</text>
+            <path class="flow-line dashed" d="M696 147 C570 222 345 218 170 151"></path>
+            <text class="flow-small" x="442" y="228" text-anchor="middle">崩溃后可凭 PID / PGID 精确清理和判定恢复路径</text>
+          </svg>
+          <figcaption>launcher 在 Runner 把子进程身份写入 Ledger 与 lock 之前不会执行 Claude，从而把“进程存在但无人知道”的窗口压缩到最小。</figcaption>
+        </figure>
+        <h3>失败如何恢复</h3>
+        <div class="steps">
+          <div class="step"><div class="step-no">A</div><div><h3>普通 gate failure</h3><p>记录 HEAD、porcelain status 与内容 fingerprint，保持 <code>running</code>，下一动作变为 <code>resume</code>。</p></div></div>
+          <div class="step"><div class="step-no">B</div><div><h3>恢复前校验现场</h3><p>若任何文件内容、分支或历史发生漂移，拒绝 resume，避免在错误上下文继续。</p></div></div>
+          <div class="step"><div class="step-no">C</div><div><h3>复用原 Session</h3><p>Runner 使用 <code>--resume &lt;session-id&gt;</code>，提示只修复当前 gate，不得开始下一票。</p></div></div>
+          <div class="step"><div class="step-no">D</div><div><h3>恢复额度</h3><p>implementation 与 closeout 各自最多两次 resume；额度耗尽转为 <code>terminal-failure</code>。</p></div></div>
+        </div>
+        <div class="callout danger">
+          <strong>SIGKILL / Runner 崩溃不是盲目重跑</strong>
+          <p>若 child 尚未 spawn，可清理 stale lock 后重试 initial call；若已 spawn，先验证并终止残留进程组，再转为 <code>interrupted</code>，必须显式 <code>reopen</code> 后恢复原 Session。</p>
+        </div>
+        <p class="ref">原子 Ledger：ticket_loop.py:548-567 · 双锁：ticket_loop.py:445-545 · 恢复 fingerprint：ticket_loop.py:1303-1404 · stale process：ticket_loop.py:1588-1631</p>
+      </section>
+
+      <section id="operations">
+        <div class="rule-title"><span class="num">07</span><h2>观察、停止、重开与清理</h2></div>
+        <p>需要细粒度控制时，可绕过 Supervisor 直接使用 Runner。以下命令中的路径以已安装 Skill 目录为例。</p>
+        <pre><code>RUNNER="${CLAUDE_SKILL_DIR}/scripts/ticket_loop.py"
+
+python3 "$RUNNER" plan   --issues-dir .scratch/feature/issues --range 01-07
+python3 "$RUNNER" start  --tickets path/to/01.md path/to/02.md
+python3 "$RUNNER" step   --run &lt;run-id&gt;
+python3 "$RUNNER" resume --run &lt;run-id&gt;
+python3 "$RUNNER" status --run &lt;run-id&gt;
+python3 "$RUNNER" reopen --run &lt;run-id&gt;
+python3 "$RUNNER" abort  --run &lt;run-id&gt;
+python3 "$RUNNER" clean  --run &lt;run-id&gt;</code></pre>
+        <div class="matrix-wrap">
+          <table>
+            <thead><tr><th>命令</th><th>会调用 Claude？</th><th>关键行为</th></tr></thead>
+            <tbody>
+              <tr><td><code>status</code></td><td>否</td><td>只读公开状态、当前 ticket/session、尝试次数、调用、成本、gate failures</td></tr>
+              <tr><td><code>abort</code></td><td>否</td><td>终止活动进程组，状态置为 aborted；不 reset/stash/delete 业务改动</td></tr>
+              <tr><td><code>reopen</code></td><td>否</td><td>重新验证仓库、分支、祖先关系、恢复 fingerprint 与 Session 身份，再回到 running</td></tr>
+              <tr><td><code>clean</code></td><td>否</td><td>仅删除该 run 的 Ledger 与日志；只允许 completed / aborted</td></tr>
+              <tr><td><code>step</code></td><td>至多一次</td><td>推进正常阶段</td></tr>
+              <tr><td><code>resume</code></td><td>至多一次</td><td>在现场未漂移时恢复原 Session</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout warning">
+          <strong>重新调用一键 Skill 不会接管旧 run</strong>
+          <p>Supervisor 总是先 <code>plan → start</code>；已有 run 会让新 start 受仓库锁阻止。只有直接 Runner 的生命周期命令在省略 <code>--run</code> 且恰好存在一个未完成 run 时，才会自动选择它。</p>
+        </div>
+        <div class="callout">
+          <strong>清理故障 run</strong>
+          <p><code>terminal-failure</code> 或 <code>interrupted</code> 不能直接 clean。若决定放弃，先执行 <code>abort</code>，再执行 <code>clean</code>。</p>
+        </div>
+        <p class="ref">CLI：ticket_loop.py:1768-1854 · status：ticket_loop.py:701-723 · abort/reopen/clean：ticket_loop.py:1634-1734</p>
+      </section>
+
+      <section id="claude-session">
+        <div class="rule-title"><span class="num">08</span><h2>Claude Session 与无人值守执行</h2></div>
+        <p class="lead">是的，Ticket Loop 使用 Claude Code CLI 的 print 模式发起 Session：源码写的是长参数 <code>claude --print</code>，等价于常说的 <code>claude -p</code>。它不是交互式 TUI，而是执行一次 prompt，等待 JSON 结果后退出。</p>
+
+        <h3>首次 Implementation：创建 Session</h3>
+        <pre><code>claude \
+  --print \
+  --output-format json \
+  --permission-mode bypassPermissions \
+  --dangerously-skip-permissions \
+  --append-system-prompt "$UNATTENDED_CONTEXT" \
+  [--model "$MODEL"] \
+  --session-id "$SESSION_ID" \
+  "/$IMPLEMENT_COMMAND @$ABSOLUTE_TICKET_PATH"</code></pre>
+        <p>每张新工单生成一个 UUID Session。<code>--model</code> 仅在启动参数显式指定模型时出现；首条 prompt 严格为 <code>/&lt;resolved-command&gt; @&lt;ticket-absolute-path&gt;</code>。</p>
+
+        <h3>Closeout 与恢复：继续原 Session</h3>
+        <pre><code>claude \
+  --print \
+  --output-format json \
+  --permission-mode bypassPermissions \
+  --dangerously-skip-permissions \
+  --append-system-prompt "$UNATTENDED_CONTEXT" \
+  [--model "$MODEL"] \
+  --resume "$SESSION_ID" \
+  "$CLOSEOUT_OR_RECOVERY_PROMPT"</code></pre>
+        <p>Implementation、Closeout 和故障恢复复用同一张票的 Session。Runner 还会验证 Claude JSON 返回的 <code>session_id</code> 同时匹配 Ledger 与当前 ticket 映射；不匹配时进入不可 reopen 的 <code>claude-session-mismatch</code>。</p>
+
+        <h3>实际进程还有一层 Child Launcher</h3>
+        <pre><code>python ticket_loop.py __child-launcher &lt;control-fd&gt; \
+  claude &lt;上述完整参数...&gt;</code></pre>
+        <p>Launcher 先等待控制管道。Runner 得到 PID/PGID 并把 <code>in_flight=spawned</code> 写入 Ledger 和运行锁后，才向管道写入 <code>1</code>，随后 Launcher 通过 <code>execvp</code> 真正执行 Claude。这避免 Runner 崩溃后出现“Claude 已启动，但账本不知道它是谁”的孤儿进程窗口。</p>
+
+        <h3>如何降低中途询问造成的中断</h3>
+        <div class="steps">
+          <div class="step"><div class="step-no">01</div><div><h3>非交互调用边界</h3><p><code>--print --output-format json</code> 不启动交互式 Claude Code TUI，Runner 捕获 stdout/stderr 并等待单次调用结束。</p></div></div>
+          <div class="step"><div class="step-no">02</div><div><h3>跳过工具权限确认</h3><p><code>--permission-mode bypassPermissions</code> 与 <code>--dangerously-skip-permissions</code> 避免文件修改、测试和 Git 工具弹出审批。这也移除了权限保护，只能用于可信执行面。</p></div></div>
+          <div class="step"><div class="step-no">03</div><div><h3>无人值守系统提示</h3><p>工单、Testing Decisions、验收标准与既有测试边界视为预先授权；对纯本地、可逆、低风险且可从现有惯例推导的选择，采用推荐默认、记录假设并继续，不等待用户确认。</p></div></div>
+          <div class="step"><div class="step-no">04</div><div><h3>门禁失败自动 Resume</h3><p>若 Claude 只输出问题而未完成提交，Runner 会从无提交、脏工作区或 evidence 不完整等硬门禁识别失败，随后 Supervisor 使用原 Session 自动 resume。</p></div></div>
+          <div class="step"><div class="step-no">05</div><div><h3>超时终止进程组</h3><p>Implementation 默认 5400 秒，Closeout/Resume 默认 1800 秒；超时先 SIGTERM，1 秒后仍未退出则 SIGKILL，并保存日志进入恢复路径。</p></div></div>
+        </div>
+
+        <div class="callout warning">
+          <strong>并非所有问题都应自动决策</strong>
+          <p>遇到不可逆决策、凭据或生产环境、网络发布、push/PR、Git 历史改写、超范围删除，或不同选项会实质改变交付且无法安全回退时，系统提示仍要求 Claude 停止并报告。这是安全边界，不应通过更强提示词消除。</p>
+        </div>
+
+        <h3>当前仍可加固：关闭继承的 stdin</h3>
+        <p>当前 <code>subprocess.Popen</code> 捕获了 stdout/stderr，但没有显式设置 stdin，因此 Launcher/Claude 理论上仍继承 Runner 的标准输入。严格无人值守边界可增加：</p>
+        <pre><code>process = subprocess.Popen(
+    launcher_command,
+    cwd=str(ledger["repository"]),
+    stdin=subprocess.DEVNULL,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+    text=True,
+    start_new_session=True,
+    pass_fds=(control_read,),
+)</code></pre>
+        <p><code>stdin=DEVNULL</code> 可使意外读取终端输入的代码立即得到 EOF，而不是悬挂等待；但它不能阻止模型在最终文本中提出澄清问题，后者仍依赖明确工单、Testing Decisions、无人值守提示、硬门禁和原 Session resume。</p>
+
+        <h3>推荐在工单中补充 Testing Decisions</h3>
+        <pre><code>## Testing Decisions
+
+- 使用仓库现有测试框架，不引入新框架。
+- 采用相邻模块的 mock 方式。
+- 允许新增本地 fixture，不访问生产服务。
+- 不要求 push 或创建 PR。
+- 多个等价且可逆的实现中，采用与相邻模块一致的方案并继续。</code></pre>
+        <div class="callout good">
+          <strong>最稳妥的无人值守组合</strong>
+          <p>明确工单 + Testing Decisions + <code>--print</code> + bypassPermissions + unattended system prompt + 超时 + Git/工单门禁 + 原 Session resume；建议再补充 <code>stdin=DEVNULL</code>。</p>
+        </div>
+        <p class="ref">命令构造：ticket_loop.py:1044-1069 · Child launcher：ticket_loop.py:1028-1106 · 无人值守提示：ticket_loop.py:48-50 · 恢复 prompt：ticket_loop.py:1327-1343 · 超时：ticket_loop.py:1119-1146</p>
+      </section>
+
+      <section id="security">
+        <div class="rule-title"><span class="num">09</span><h2>安全边界</h2></div>
+        <div class="callout danger">
+          <strong>这是高权限无人值守执行，不是沙箱</strong>
+          <p>任务 Session 以 <code>bypassPermissions</code> 与 <code>--dangerously-skip-permissions</code> 运行。Git 门禁只能验证仓库结果，不能阻止恶意命令、凭据读取或仓库外副作用。</p>
+        </div>
+        <p>Runner 追加的无人值守系统上下文允许本地源码、测试、ticket 状态和本地提交，但要求在凭据、生产环境、网络发布、push/PR、历史改写、超范围删除或不可逆决策处停止。这是<strong>行为约束</strong>，不是操作系统级隔离。</p>
+        <h3>仅在可信执行面使用</h3>
+        <ul>
+          <li>可信仓库与项目指令（CLAUDE.md）。</li>
+          <li>可信插件、Skills、hooks 与 MCP servers。</li>
+          <li>可信构建脚本和依赖安装行为。</li>
+          <li>明确接受本地日志长期保留源码片段、命令输出和路径。</li>
+        </ul>
+        <h3>成本门禁的真实语义</h3>
+        <p><code>--max-cost-usd</code> 在<strong>每次调用前</strong>检查累计成本。若调用前尚未达到上限，该次调用仍会开始，因此最终累计成本可能超过门限；若成本字段未知且配置了上限，则 fail closed。</p>
+        <p class="ref">Claude 命令：ticket_loop.py:1044-1069 · 无人值守上下文：ticket_loop.py:48-50 · 成本：ticket_loop.py:1014-1025,1191-1196</p>
+      </section>
+
+      <section id="limits">
+        <div class="rule-title"><span class="num">10</span><h2>限制、边界条件与易错点</h2></div>
+        <details open>
+          <summary>平台：当前实现面向 POSIX</summary>
+          <div>代码直接依赖 <code>fcntl.flock</code>，适用于 macOS/Linux；Windows Python 不能按当前实现直接运行。</div>
+        </details>
+        <details>
+          <summary>只支持串行，不支持并行或多 worktree 分发</summary>
+          <div>任一时刻只处理一张票；不会自动创建分支、worktree 或 clone，也不会 pull、push、PR、merge、rebase、cherry-pick、stash、reset。</div>
+        </details>
+        <details>
+          <summary>外部 blocker 在运行中不可变</summary>
+          <div>外部 blocker 的路径、状态、kind 与 SHA-256 被冻结。运行中人工完成或修改它会被视为漂移并触发 terminal failure；应重建 run，或一开始就把 blocker 纳入 Manifest。</div>
+        </details>
+        <details>
+          <summary>预先 done 的 ticket 校验弱于本次完成的 ticket</summary>
+          <div>Manifest 中预先标为 done 的 ticket 会直接进入 completed 集合，不会执行本次 closeout 的完整 evidence 与 commit 存在性校验，因此其真实性仍依赖生成者或人工保证。</div>
+        </details>
+        <details>
+          <summary>人工“顺手修复”可能破坏恢复</summary>
+          <div>普通失败后，Runner 会冻结 Git snapshot 与文件内容 fingerprint。外部人工修改即使正确，也可能触发 <code>recovery-context-drift</code>；这是有意的 fail-closed 设计。</div>
+        </details>
+        <details>
+          <summary>Session mismatch 不可 reopen</summary>
+          <div>Claude 返回的 session ID 与 Ledger / 当前 ticket 映射不一致时，身份链已不可信，只允许 status 或 abort。</div>
+        </details>
+        <details>
+          <summary>日志不会自动清理</summary>
+          <div>原始 Claude JSON 和 stderr 会持续保留；它们可能含源码片段、命令输出、路径和 ticket 内容。成功后也必须显式 <code>clean</code>。</div>
+        </details>
+        <details>
+          <summary>测试覆盖广，但本报告未重新执行测试</summary>
+          <div>当前测试文件有 74 个 <code>test_...</code> 方法，使用真实临时 Git 仓库与 fake Claude executable 覆盖进程边界；本报告基于只读代码审阅，没有重新运行测试。</div>
+        </details>
+      </section>
+
+      <section id="files">
+        <div class="rule-title"><span class="num">11</span><h2>关键文件索引</h2></div>
+        <div class="matrix-wrap">
+          <table>
+            <thead><tr><th>文件</th><th>职责</th></tr></thead>
+            <tbody>
+              <tr><td><code>README.md:17-27</code></td><td>Marketplace 与插件安装</td></tr>
+              <tr><td><code>plugins/felix-skills/skills/ticket-loop/SKILL.md:1-58</code></td><td>用户入口、安全警告、运行参数、Runner 命令</td></tr>
+              <tr><td><code>.../scripts/supervise.py:14-151</code></td><td>Supervisor 循环与终止策略</td></tr>
+              <tr><td><code>.../scripts/ticket_loop.py:104-355</code></td><td>Ticket 解析、依赖图、Plan</td></tr>
+              <tr><td><code>.../scripts/ticket_loop.py:369-698</code></td><td>Git 身份、门禁、锁、Ledger、allowed actions</td></tr>
+              <tr><td><code>.../scripts/ticket_loop.py:726-968</code></td><td>调度、Session 激活、Start</td></tr>
+              <tr><td><code>.../scripts/ticket_loop.py:977-1343</code></td><td>日志、成本、Claude 子进程、完成与恢复门禁</td></tr>
+              <tr><td><code>.../scripts/ticket_loop.py:1366-1734</code></td><td>Step/Resume 状态转换、进程终止、Reopen/Abort/Clean/Status</td></tr>
+              <tr><td><code>.../tests/test_ticket_loop.py:1-1777</code></td><td>74 项进程边界测试</td></tr>
+              <tr><td><code>.scratch/ticket-loop/spec.md:1-209</code></td><td>总体需求、设计决策与 out-of-scope</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout good">
+          <strong>适用场景</strong>
+          <p>当你有一组边界清晰、依赖明确、允许本地自动提交的 Markdown 工单，并且更重视可恢复性、审计轨迹与 fail-closed，而不是并行吞吐量时，Ticket Loop 很合适。</p>
+        </div>
+      </section>
+    </article>
+  </div>
+
+  <footer class="footer">
+    <span>基于 felix-plugins 当前 main 分支只读代码审阅</span>
+    <span>报告生成于 2026-09-15</span>
+  </footer>
+</div>
