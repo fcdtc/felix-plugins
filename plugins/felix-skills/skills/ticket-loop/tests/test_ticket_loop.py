@@ -294,9 +294,30 @@ scenario_path = root / ".ticket-loop" / "scenario"
 scenario = scenario_path.read_text(encoding="utf-8").strip() if scenario_path.exists() else "default"
 ticket = root / "需求 空间" / "issues" / "02-单工单.md"
 if prompt.startswith("/implement "):
+    if scenario == "no-commit":
+        print(json.dumps({"type": "result", "cost_usd": 0.01}))
+        raise SystemExit(0)
     (root / "implementation.txt").write_text("implemented\\n", encoding="utf-8")
     subprocess.run(["git", "add", "implementation.txt"], check=True)
     subprocess.run(["git", "commit", "-qm", "feat: implement ticket"], check=True)
+    if scenario in {"branch-drift", "branch-drift-invalid-json"}:
+        subprocess.run(["git", "switch", "-qc", "drift"], check=True)
+    if scenario == "history-rewrite":
+        tree = subprocess.run(["git", "write-tree"], text=True, capture_output=True, check=True).stdout.strip()
+        replacement = subprocess.run(
+            ["git", "commit-tree", tree, "-m", "replacement root"],
+            text=True,
+            capture_output=True,
+            check=True,
+        ).stdout.strip()
+        branch = subprocess.run(["git", "branch", "--show-current"], text=True, capture_output=True, check=True).stdout.strip()
+        subprocess.run(["git", "update-ref", f"refs/heads/{branch}", replacement], check=True)
+    if scenario == "merge-in-progress":
+        git_dir = Path(subprocess.run(["git", "rev-parse", "--git-dir"], text=True, capture_output=True, check=True).stdout.strip())
+        (git_dir / "MERGE_HEAD").write_text(subprocess.run(["git", "rev-parse", "HEAD"], text=True, capture_output=True, check=True).stdout, encoding="utf-8")
+    if scenario == "branch-drift-invalid-json":
+        print("not json")
+        raise SystemExit(1)
     if scenario == "already-closed":
         implementation = subprocess.run(["git", "rev-parse", "HEAD"], text=True, capture_output=True, check=True).stdout.strip()
         text = ticket.read_text(encoding="utf-8")
@@ -345,6 +366,252 @@ print(json.dumps({"type": "result", "cost_usd": 0.01}))
     def payload(self, result):
         self.assertEqual(result.stdout.count("\n"), 1, result.stdout)
         return json.loads(result.stdout)
+
+    def start(self):
+        return self.cli(
+            "start",
+            "--tickets",
+            self.ticket,
+            "--claude-executable",
+            self.fake_claude,
+        )
+
+    def assert_rejected(self, result, code):
+        self.assertEqual(result.returncode, 2, result.stderr)
+        payload = self.payload(result)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["error"]["code"], code)
+
+    def lock_path(self):
+        common = Path(self.git("rev-parse", "--git-common-dir").strip())
+        if not common.is_absolute():
+            common = self.root / common
+        return common / "ticket-loop" / "lock.json"
+
+    def test_start_rejects_detached_dirty_and_git_operation_states(self):
+        subprocess.run(["git", "-C", str(self.root), "checkout", "--detach", "-q"], check=True)
+        self.assert_rejected(self.start(), "detached-head")
+        subprocess.run(["git", "-C", str(self.root), "switch", "-q", "-"], check=True)
+
+        (self.root / "README.md").write_text("changed\n", encoding="utf-8")
+        self.assert_rejected(self.start(), "dirty-worktree")
+        subprocess.run(["git", "-C", str(self.root), "restore", "README.md"], check=True)
+
+        (self.root / "staged.txt").write_text("staged\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(self.root), "add", "staged.txt"], check=True)
+        self.assert_rejected(self.start(), "dirty-worktree")
+        subprocess.run(["git", "-C", str(self.root), "reset", "-q", "HEAD", "staged.txt"], check=True)
+        (self.root / "staged.txt").unlink()
+
+        (self.root / "untracked.txt").write_text("untracked\n", encoding="utf-8")
+        self.assert_rejected(self.start(), "dirty-worktree")
+        (self.root / "untracked.txt").unlink()
+
+        git_dir = Path(self.git("rev-parse", "--git-dir").strip())
+        if not git_dir.is_absolute():
+            git_dir = self.root / git_dir
+        for marker in ("MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge"):
+            path = git_dir / marker
+            if marker == "rebase-merge":
+                path.mkdir()
+            else:
+                path.write_text(self.start_head + "\n", encoding="utf-8")
+            self.assert_rejected(self.start(), "git-operation-in-progress")
+            if path.is_dir():
+                path.rmdir()
+            else:
+                path.unlink()
+
+    def test_start_maintains_local_exclude_without_touching_gitignore(self):
+        gitignore = self.root / ".gitignore"
+        gitignore.write_text("*.tmp\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(self.root), "add", ".gitignore"], check=True)
+        subprocess.run(["git", "-C", str(self.root), "commit", "-qm", "add ignore"], check=True)
+        exclude = self.root / ".git" / "info" / "exclude"
+        exclude.write_text("*.local", encoding="utf-8")
+
+        started = self.start()
+
+        self.assertEqual(started.returncode, 0, started.stderr)
+        self.assertEqual(exclude.read_text(encoding="utf-8").splitlines().count(".ticket-loop/"), 1)
+        self.assertEqual(gitignore.read_text(encoding="utf-8"), "*.tmp\n")
+        self.assertEqual(self.git("status", "--porcelain=v1", "--untracked-files=all"), "")
+
+    def test_start_rejects_tracked_ticket_loop_directory(self):
+        tracked = self.root / ".ticket-loop" / "owned.txt"
+        tracked.parent.mkdir()
+        tracked.write_text("owned\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(self.root), "add", ".ticket-loop/owned.txt"], check=True)
+        subprocess.run(["git", "-C", str(self.root), "commit", "-qm", "track reserved path"], check=True)
+
+        self.assert_rejected(self.start(), "tracked-run-directory")
+        self.assertEqual(tracked.read_text(encoding="utf-8"), "owned\n")
+
+    def test_repository_lock_records_owner_and_rejects_second_run(self):
+        started = self.start()
+        self.assertEqual(started.returncode, 0, started.stderr)
+        first = self.payload(started)
+        lock_path = self.lock_path()
+        lock = json.loads(lock_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(lock["run_id"], first["run_id"])
+        self.assertEqual(lock["branch"], self.git("branch", "--show-current").strip())
+        self.assertEqual(lock["repository"], str(self.root.resolve()))
+        self.assertIsInstance(lock["pid"], int)
+        self.assertTrue(lock["started_at"].endswith("+00:00"))
+        self.assertEqual(lock_path.stat().st_mode & 0o777, 0o600)
+        self.assert_rejected(self.start(), "repository-locked")
+        self.assertEqual(json.loads(lock_path.read_text(encoding="utf-8"))["run_id"], first["run_id"])
+        self.assertEqual(len(list((self.root / ".ticket-loop" / "runs").glob("*.json"))), 1)
+
+    def test_recoverable_gate_failure_keeps_lock(self):
+        started = self.start()
+        run_id = self.payload(started)["run_id"]
+        (self.root / ".ticket-loop" / "scenario").write_text("no-commit", encoding="utf-8")
+
+        failed = self.cli("step", "--run", run_id)
+
+        self.assert_rejected(failed, "implementation-no-commit")
+        status = self.payload(self.cli("status", "--run", run_id))
+        self.assertEqual(status["state"], "running")
+        self.assertEqual(json.loads(self.lock_path().read_text(encoding="utf-8"))["run_id"], run_id)
+
+    def test_post_call_branch_drift_becomes_terminal_failure_and_releases_lock(self):
+        started = self.start()
+        run_id = self.payload(started)["run_id"]
+        (self.root / ".ticket-loop" / "scenario").write_text("branch-drift", encoding="utf-8")
+
+        failed = self.cli("step", "--run", run_id)
+
+        self.assert_rejected(failed, "branch-drift")
+        status = self.payload(self.cli("status", "--run", run_id))
+        self.assertEqual(status["state"], "terminal-failure")
+        self.assertEqual(status["phase"], "implementation")
+        self.assertEqual(status["allowed_actions"], ["status"])
+        self.assertFalse(self.lock_path().exists())
+        self.assert_rejected(self.cli("step", "--run", run_id), "run-terminal-failure")
+
+    def test_pre_call_dirty_worktree_does_not_invoke_claude(self):
+        started = self.start()
+        run_id = self.payload(started)["run_id"]
+        (self.root / "outside.txt").write_text("dirty\n", encoding="utf-8")
+
+        failed = self.cli("step", "--run", run_id)
+
+        self.assert_rejected(failed, "dirty-worktree")
+        self.assertFalse(self.calls.exists())
+        self.assertEqual(self.payload(self.cli("status", "--run", run_id))["state"], "running")
+        self.assertTrue((self.root / "outside.txt").exists())
+
+    def test_pre_call_branch_drift_and_git_operation_do_not_invoke_claude(self):
+        for scenario, code in (("branch", "branch-drift"), ("operation", "git-operation-in-progress")):
+            with self.subTest(scenario=scenario):
+                if scenario != "branch":
+                    self.tearDown()
+                    self.setUp()
+                started = self.start()
+                run_id = self.payload(started)["run_id"]
+                if scenario == "branch":
+                    subprocess.run(["git", "-C", str(self.root), "switch", "-qc", "other"], check=True)
+                else:
+                    git_dir = Path(self.git("rev-parse", "--git-dir").strip())
+                    if not git_dir.is_absolute():
+                        git_dir = self.root / git_dir
+                    (git_dir / "MERGE_HEAD").write_text(self.start_head + "\n", encoding="utf-8")
+
+                failed = self.cli("step", "--run", run_id)
+
+                self.assert_rejected(failed, code)
+                self.assertFalse(self.calls.exists())
+                self.assertEqual(self.payload(self.cli("status", "--run", run_id))["state"], "terminal-failure")
+
+    def test_pre_call_detached_head_becomes_terminal_without_invoking_claude(self):
+        started = self.start()
+        run_id = self.payload(started)["run_id"]
+        subprocess.run(["git", "-C", str(self.root), "checkout", "--detach", "-q"], check=True)
+
+        failed = self.cli("step", "--run", run_id)
+
+        self.assert_rejected(failed, "branch-drift")
+        self.assertFalse(self.calls.exists())
+        self.assertEqual(self.payload(self.cli("status", "--run", run_id))["state"], "terminal-failure")
+
+    def test_pre_call_history_rewrite_becomes_terminal_without_invoking_claude(self):
+        started = self.start()
+        run_id = self.payload(started)["run_id"]
+        tree = self.git("write-tree").strip()
+        replacement = subprocess.run(
+            ["git", "-C", str(self.root), "commit-tree", tree, "-m", "replacement root"],
+            text=True,
+            capture_output=True,
+            check=True,
+        ).stdout.strip()
+        branch = self.git("branch", "--show-current").strip()
+        subprocess.run(["git", "-C", str(self.root), "update-ref", f"refs/heads/{branch}", replacement], check=True)
+
+        failed = self.cli("step", "--run", run_id)
+
+        self.assert_rejected(failed, "history-rewritten")
+        self.assertFalse(self.calls.exists())
+        self.assertEqual(self.payload(self.cli("status", "--run", run_id))["state"], "terminal-failure")
+
+    def test_post_call_history_rewrite_and_git_operation_are_terminal(self):
+        for scenario, code in (("history-rewrite", "history-rewritten"), ("merge-in-progress", "git-operation-in-progress")):
+            with self.subTest(scenario=scenario):
+                if scenario != "history-rewrite":
+                    self.tearDown()
+                    self.setUp()
+                started = self.start()
+                run_id = self.payload(started)["run_id"]
+                (self.root / ".ticket-loop" / "scenario").write_text(scenario, encoding="utf-8")
+
+                failed = self.cli("step", "--run", run_id)
+
+                self.assert_rejected(failed, code)
+                self.assertEqual(self.payload(self.cli("status", "--run", run_id))["state"], "terminal-failure")
+                self.assertFalse(self.lock_path().exists())
+
+    def test_git_drift_takes_priority_over_invalid_claude_json(self):
+        started = self.start()
+        run_id = self.payload(started)["run_id"]
+        (self.root / ".ticket-loop" / "scenario").write_text("branch-drift-invalid-json", encoding="utf-8")
+
+        failed = self.cli("step", "--run", run_id)
+
+        self.assert_rejected(failed, "branch-drift")
+        logs = list((self.root / ".ticket-loop" / "logs" / run_id).glob("*.json"))
+        self.assertEqual(len(logs), 1)
+        self.assertEqual(logs[0].read_text(encoding="utf-8"), "not json\n")
+
+    def test_malformed_lock_becomes_structured_terminal_failure(self):
+        started = self.start()
+        run_id = self.payload(started)["run_id"]
+        self.lock_path().write_text("[]", encoding="utf-8")
+
+        failed = self.cli("step", "--run", run_id)
+
+        self.assert_rejected(failed, "run-lock-mismatch")
+        self.assertEqual(self.payload(self.cli("status", "--run", run_id))["state"], "terminal-failure")
+
+    def test_missing_or_replaced_lock_becomes_terminal_without_deleting_foreign_lock(self):
+        for replacement in (None, "foreign"):
+            with self.subTest(replacement=replacement):
+                if replacement == "foreign":
+                    self.tearDown()
+                    self.setUp()
+                started = self.start()
+                run_id = self.payload(started)["run_id"]
+                self.lock_path().unlink()
+                if replacement:
+                    self.lock_path().write_text(json.dumps({"run_id": replacement}), encoding="utf-8")
+
+                failed = self.cli("step", "--run", run_id)
+
+                self.assert_rejected(failed, "run-lock-missing" if replacement is None else "run-lock-mismatch")
+                self.assertFalse(self.calls.exists())
+                self.assertEqual(self.payload(self.cli("status", "--run", run_id))["state"], "terminal-failure")
+                if replacement:
+                    self.assertEqual(json.loads(self.lock_path().read_text(encoding="utf-8"))["run_id"], replacement)
 
     def test_runs_implementation_and_closeout_in_the_same_persistent_session(self):
         started = self.cli(

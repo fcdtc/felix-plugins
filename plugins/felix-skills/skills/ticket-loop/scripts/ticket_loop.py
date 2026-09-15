@@ -5,7 +5,8 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timezone
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -17,6 +18,14 @@ import uuid
 
 
 SCHEMA_VERSION = "1.0"
+TERMINAL_GIT_ERRORS = {
+    "repository-drift",
+    "branch-drift",
+    "history-rewritten",
+    "git-operation-in-progress",
+    "run-lock-missing",
+    "run-lock-mismatch",
+}
 FILENAME_RE = re.compile(r"^(?P<id>0[1-9]|[1-9]\d)-.+\.md$")
 FIELD_RE = re.compile(
     r"^\s*(?:\*\*)?(?P<name>What to build|Blocked by|Status|Type)(?:\*\*)?\s*:\s*(?:\*\*)?\s*(?P<value>.*?)\s*$",
@@ -313,7 +322,7 @@ def run_git(repository: Path, *args: str, check: bool = True) -> subprocess.Comp
     return result
 
 
-def repository_identity(cwd: Path) -> tuple[Path, Path, str, str]:
+def repository_location(cwd: Path) -> tuple[Path, Path]:
     root_result = run_git(cwd, "rev-parse", "--show-toplevel", check=False)
     if root_result.returncode:
         raise PlanError("not-a-git-repository", "当前目录不在 Git 仓库中")
@@ -322,6 +331,11 @@ def repository_identity(cwd: Path) -> tuple[Path, Path, str, str]:
     common = Path(common_raw)
     if not common.is_absolute():
         common = (root / common).resolve()
+    return root, common
+
+
+def repository_identity(cwd: Path) -> tuple[Path, Path, str, str]:
+    root, common = repository_location(cwd)
     branch = run_git(root, "symbolic-ref", "--quiet", "--short", "HEAD", check=False)
     if branch.returncode or not branch.stdout.strip():
         raise PlanError("detached-head", "必须在命名分支上启动 Loop Run")
@@ -329,20 +343,36 @@ def repository_identity(cwd: Path) -> tuple[Path, Path, str, str]:
     return root, common, branch.stdout.strip(), head
 
 
+def ensure_no_git_operation(repository: Path) -> None:
+    git_dir = Path(run_git(repository, "rev-parse", "--git-dir").stdout.strip())
+    if not git_dir.is_absolute():
+        git_dir = (repository / git_dir).resolve()
+    operations = {
+        "merge": "MERGE_HEAD",
+        "cherry-pick": "CHERRY_PICK_HEAD",
+        "revert": "REVERT_HEAD",
+        "rebase": "rebase-merge",
+        "rebase-apply": "rebase-apply",
+    }
+    active = [name for name, marker in operations.items() if (git_dir / marker).exists()]
+    if active:
+        raise PlanError("git-operation-in-progress", f"存在未完成的 Git 操作: {', '.join(active)}")
+
+
 def ensure_clean(repository: Path) -> None:
+    ensure_no_git_operation(repository)
     status = run_git(repository, "status", "--porcelain=v1", "--untracked-files=all").stdout
     if status:
         raise PlanError("dirty-worktree", "工作区、index 或 untracked 文件不干净")
-    git_dir = Path(run_git(repository, "rev-parse", "--git-dir").stdout.strip())
-    if not git_dir.is_absolute():
-        git_dir = repository / git_dir
-    operation_paths = ("MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply")
-    if any((git_dir / name).exists() for name in operation_paths):
-        raise PlanError("git-operation-in-progress", "存在未完成的 Git 操作")
 
 
 def ensure_repository_matches(ledger: dict[str, object]) -> tuple[Path, str]:
-    repository, common, branch, head = repository_identity(Path.cwd())
+    try:
+        repository, common, branch, head = repository_identity(Path.cwd())
+    except PlanError as error:
+        if error.code == "detached-head":
+            raise PlanError("branch-drift", "当前分支与 Run Ledger 不一致") from error
+        raise
     if str(repository) != ledger["repository"] or str(common) != ledger["git_common_directory"]:
         raise PlanError("repository-drift", "当前 Git 仓库与 Run Ledger 不一致")
     if branch != ledger["branch"]:
@@ -354,6 +384,62 @@ def ledger_path(repository: Path, run_id: str) -> Path:
     return repository / ".ticket-loop" / "runs" / f"{run_id}.json"
 
 
+def lock_path(common: Path) -> Path:
+    return common / "ticket-loop" / "lock.json"
+
+
+def acquire_run_lock(common: Path, lock: dict[str, object]) -> None:
+    path = lock_path(common)
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    payload = (json.dumps(lock, ensure_ascii=False, indent=2) + "\n").encode()
+    try:
+        descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except FileExistsError as error:
+        raise PlanError("repository-locked", f"仓库已有活动 Loop Run: {path}") from error
+    try:
+        os.write(descriptor, payload)
+    except BaseException:
+        os.close(descriptor)
+        path.unlink(missing_ok=True)
+        raise
+    os.close(descriptor)
+
+
+def read_run_lock(common: Path) -> dict[str, object]:
+    path = lock_path(common)
+    try:
+        lock = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as error:
+        raise PlanError("run-lock-missing", "Loop Run 的仓库锁不存在") from error
+    except (OSError, json.JSONDecodeError) as error:
+        raise PlanError("run-lock-mismatch", "Loop Run 的仓库锁无效") from error
+    if not isinstance(lock, dict):
+        raise PlanError("run-lock-mismatch", "Loop Run 的仓库锁无效")
+    return lock
+
+
+def ensure_run_lock(ledger: dict[str, object]) -> None:
+    lock = read_run_lock(Path(str(ledger["git_common_directory"])))
+    if lock.get("run_id") != ledger["run_id"]:
+        raise PlanError("run-lock-mismatch", "仓库锁不属于当前 Loop Run")
+
+
+def release_run_lock(ledger: dict[str, object]) -> None:
+    path = lock_path(Path(str(ledger["git_common_directory"])))
+    try:
+        with path.open("r+", encoding="utf-8") as stream:
+            fcntl.flock(stream, fcntl.LOCK_EX)
+            try:
+                lock = json.load(stream)
+            except json.JSONDecodeError:
+                return
+            same_file = os.fstat(stream.fileno()).st_ino == path.stat().st_ino
+            if same_file and isinstance(lock, dict) and lock.get("run_id") == ledger["run_id"]:
+                path.unlink()
+    except FileNotFoundError:
+        return
+
+
 def write_ledger(path: Path, ledger: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     temporary = path.with_suffix(".json.tmp")
@@ -363,7 +449,7 @@ def write_ledger(path: Path, ledger: dict[str, object]) -> None:
 
 
 def load_ledger(run_id: str) -> tuple[Path, dict[str, object]]:
-    repository, _, _, _ = repository_identity(Path.cwd())
+    repository, _ = repository_location(Path.cwd())
     path = ledger_path(repository, run_id)
     try:
         ledger = json.loads(path.read_text(encoding="utf-8"))
@@ -399,7 +485,7 @@ def public_run(ledger: dict[str, object], command: str) -> dict[str, object]:
         "phase": ledger["phase"],
         "active_ticket": ledger["active_ticket"],
         "session_id": ledger["session_id"],
-        "allowed_actions": ["status"] if ledger["state"] == "completed" else ["step", "status"],
+        "allowed_actions": ["status"] if ledger["state"] in {"completed", "terminal-failure"} else ["step", "status"],
         "git": {
             "repository": ledger["repository"],
             "branch": ledger["branch"],
@@ -458,8 +544,24 @@ def start_command(args: argparse.Namespace) -> dict[str, object]:
         "claude_calls": [],
         "gate_failures": [],
     }
+    acquire_run_lock(
+        common,
+        {
+            "schema_version": SCHEMA_VERSION,
+            "pid": os.getpid(),
+            "run_id": run_id,
+            "started_at": datetime.now(timezone.utc).isoformat(),
+            "repository": str(repository),
+            "git_common_directory": str(common),
+            "branch": branch,
+        },
+    )
     path = ledger_path(repository, run_id)
-    write_ledger(path, ledger)
+    try:
+        write_ledger(path, ledger)
+    except BaseException:
+        release_run_lock(ledger)
+        raise
     return public_run(ledger, "start")
 
 
@@ -492,13 +594,18 @@ def invoke_claude(ledger: dict[str, object], phase: str, prompt: str) -> dict[st
     raw_path = log_path / f"{call_number:02d}-{phase}.json"
     raw_path.write_text(result.stdout, encoding="utf-8")
     os.chmod(raw_path, 0o600)
+    call: dict[str, object] = {
+        "phase": phase,
+        "exit_code": result.returncode,
+        "log_path": str(raw_path),
+        "result": None,
+    }
+    ledger["claude_calls"].append(call)
     try:
         parsed = json.loads(result.stdout)
     except json.JSONDecodeError as error:
         raise PlanError("invalid-claude-json", f"Claude 未返回有效 JSON；日志: {raw_path}") from error
-    ledger["claude_calls"].append(
-        {"phase": phase, "exit_code": result.returncode, "log_path": str(raw_path), "result": parsed}
-    )
+    call["result"] = parsed
     if result.returncode:
         raise PlanError("claude-failed", f"Claude 执行失败，退出码 {result.returncode}；日志: {raw_path}")
     if parsed.get("is_error") is True or parsed.get("type") == "error" or parsed.get("subtype") == "error":
@@ -506,9 +613,18 @@ def invoke_claude(ledger: dict[str, object], phase: str, prompt: str) -> dict[st
     return parsed
 
 
-def implementation_gate(ledger: dict[str, object]) -> str:
+def runtime_git_gate(ledger: dict[str, object]) -> tuple[Path, str]:
+    ensure_run_lock(ledger)
+    repository, head = ensure_repository_matches(ledger)
+    ensure_no_git_operation(repository)
+    start = str(ledger["ticket_start_head"])
+    if run_git(repository, "merge-base", "--is-ancestor", start, head, check=False).returncode:
+        raise PlanError("history-rewritten", "工单起始 HEAD 不再是当前 HEAD 的祖先")
+    return repository, head
+
+
+def implementation_gate(ledger: dict[str, object], head: str) -> str:
     repository = Path(str(ledger["repository"]))
-    _, head = ensure_repository_matches(ledger)
     start = str(ledger["ticket_start_head"])
     if head == start:
         raise PlanError("implementation-no-commit", "Implementation 没有产生新 commit")
@@ -519,9 +635,8 @@ def implementation_gate(ledger: dict[str, object]) -> str:
     return head
 
 
-def completion_gate(ledger: dict[str, object]) -> None:
+def completion_gate(ledger: dict[str, object], head: str) -> None:
     repository = Path(str(ledger["repository"]))
-    _, head = ensure_repository_matches(ledger)
     ensure_clean(repository)
     implementation_head = str(ledger["implementation_head"])
     ancestor = run_git(repository, "merge-base", "--is-ancestor", implementation_head, head, check=False)
@@ -601,24 +716,40 @@ def step_command(args: argparse.Namespace) -> dict[str, object]:
     path, ledger = load_ledger(args.run)
     if ledger["state"] == "completed":
         raise PlanError("run-already-completed", "Loop Run 已完成")
-    ensure_repository_matches(ledger)
+    if ledger["state"] == "terminal-failure":
+        raise PlanError("run-terminal-failure", "Loop Run 已进入 terminal-failure")
     phase = str(ledger["phase"])
     prompt = str(ledger[f"{phase}_prompt"])
     try:
-        invoke_claude(ledger, phase, prompt)
+        repository, _ = runtime_git_gate(ledger)
+        ensure_clean(repository)
+        claude_error: PlanError | None = None
+        try:
+            invoke_claude(ledger, phase, prompt)
+        except PlanError as error:
+            claude_error = error
+        _, head = runtime_git_gate(ledger)
+        if claude_error:
+            raise claude_error
         if phase == "implementation":
-            ledger["implementation_head"] = implementation_gate(ledger)
+            ledger["implementation_head"] = implementation_gate(ledger, head)
             ledger["phase"] = "closeout"
         else:
-            completion_gate(ledger)
+            completion_gate(ledger, head)
             ledger["state"] = "completed"
             ledger["phase"] = None
         ledger["gate_failures"] = []
     except PlanError as error:
         ledger["gate_failures"] = [{"code": error.code, "message": str(error)}]
+        if error.code in TERMINAL_GIT_ERRORS:
+            ledger["state"] = "terminal-failure"
         write_ledger(path, ledger)
+        if ledger["state"] == "terminal-failure":
+            release_run_lock(ledger)
         raise
     write_ledger(path, ledger)
+    if ledger["state"] == "completed":
+        release_run_lock(ledger)
     return public_run(ledger, "step")
 
 
