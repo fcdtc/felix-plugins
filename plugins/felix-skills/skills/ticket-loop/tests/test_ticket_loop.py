@@ -4,6 +4,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 
@@ -284,21 +285,69 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+import time
 
 args = sys.argv[1:]
 root = Path.cwd()
-with (root / ".ticket-loop" / "claude-calls.jsonl").open("a", encoding="utf-8") as stream:
+calls_path = root / ".ticket-loop" / "claude-calls.jsonl"
+prior_calls = calls_path.read_text(encoding="utf-8").splitlines() if calls_path.exists() else []
+call_number = len(prior_calls) + 1
+with calls_path.open("a", encoding="utf-8") as stream:
     stream.write(json.dumps(args, ensure_ascii=False) + "\\n")
 prompt = args[-1]
 scenario_path = root / ".ticket-loop" / "scenario"
 scenario = scenario_path.read_text(encoding="utf-8").strip() if scenario_path.exists() else "default"
 ticket = root / "需求 空间" / "issues" / "02-单工单.md"
-if prompt.startswith("/implement "):
-    if scenario == "no-commit":
+is_initial_implementation = prompt.startswith("/implement ")
+is_implementation = is_initial_implementation or "阶段: implementation" in prompt
+
+if scenario == "timeout-once" and call_number == 1:
+    time.sleep(2)
+if scenario == "timeout-child-once" and call_number == 1:
+    subprocess.Popen([
+        sys.executable,
+        "-c",
+        "import pathlib,time; time.sleep(1); pathlib.Path('late-child.txt').write_text('late')",
+    ])
+    time.sleep(2)
+if scenario == "nonzero-once" and call_number == 1:
+    print(json.dumps({"type": "result"}))
+    print("fake failure", file=sys.stderr)
+    raise SystemExit(7)
+if scenario == "invalid-json-once" and call_number == 1:
+    print("not json")
+    raise SystemExit(0)
+if scenario == "is-error-once" and call_number == 1:
+    print(json.dumps({"type": "result", "is_error": True}))
+    raise SystemExit(0)
+if scenario in {"always-error", "closeout-always-error"} and (
+    scenario == "always-error" or not is_implementation
+):
+    print(json.dumps({"type": "error", "message": "recoverable fake failure"}))
+    raise SystemExit(0)
+
+if is_implementation:
+    if scenario == "no-commit" or (scenario == "no-commit-once" and call_number == 1):
         print(json.dumps({"type": "result", "cost_usd": 0.01}))
         raise SystemExit(0)
-    (root / "implementation.txt").write_text("implemented\\n", encoding="utf-8")
-    subprocess.run(["git", "add", "implementation.txt"], check=True)
+    if scenario == "dirty-once" and call_number == 1:
+        (root / "implementation.txt").write_text("implemented\\n", encoding="utf-8")
+        print(json.dumps({"type": "result", "cost_usd": 0.01}))
+        raise SystemExit(0)
+    if scenario == "commit-and-dirty-once" and call_number == 1:
+        (root / "implementation.txt").write_text("implemented\\n", encoding="utf-8")
+        subprocess.run(["git", "add", "implementation.txt"], check=True)
+        subprocess.run(["git", "commit", "-qm", "feat: partial implementation"], check=True)
+        (root / "follow-up.txt").write_text("remaining\\n", encoding="utf-8")
+        print(json.dumps({"type": "result", "cost_usd": 0.01}))
+        raise SystemExit(0)
+    if (root / "implementation.txt").exists():
+        subprocess.run(["git", "add", "implementation.txt"], check=True)
+    else:
+        (root / "implementation.txt").write_text("implemented\\n", encoding="utf-8")
+        subprocess.run(["git", "add", "implementation.txt"], check=True)
+    if (root / "follow-up.txt").exists():
+        subprocess.run(["git", "add", "follow-up.txt"], check=True)
     subprocess.run(["git", "commit", "-qm", "feat: implement ticket"], check=True)
     if scenario in {"branch-drift", "branch-drift-invalid-json"}:
         subprocess.run(["git", "switch", "-qc", "drift"], check=True)
@@ -332,9 +381,17 @@ elif scenario != "already-closed":
     implementation = subprocess.run(["git", "rev-parse", "HEAD"], text=True, capture_output=True, check=True).stdout.strip()
     text = text.replace("**Status:** ready-for-agent", f"**Status:** done (2026-09-14, {implementation[:7]})")
     text = text.replace("- [ ] 验收 单工单", "- [x] 验收 单工单")
-    text += "\\n## Completion evidence\\n\\n- Implementation: implementation commit\\n- Typecheck: Not applicable (pure text fixture)\\n- Tests: fake CLI lifecycle passed\\n"
-    if scenario != "invalid-evidence":
+    if scenario == "closeout-dirty-once" and "## Completion evidence" not in text:
+        text += "\\n## Completion evidence\\n\\n- Implementation: implementation commit\\n- Typecheck: Not applicable (pure text fixture)\\n- Tests: fake CLI lifecycle passed\\n"
+        ticket.write_text(text, encoding="utf-8")
+        print(json.dumps({"type": "result", "cost_usd": 0.01}))
+        raise SystemExit(0)
+    if scenario == "closeout-dirty-once" and "- Review:" not in text:
         text += "- Review: reviewed implementation commit\\n"
+    elif "## Completion evidence" not in text:
+        text += "\\n## Completion evidence\\n\\n- Implementation: implementation commit\\n- Typecheck: Not applicable (pure text fixture)\\n- Tests: fake CLI lifecycle passed\\n"
+        if scenario != "invalid-evidence":
+            text += "- Review: reviewed implementation commit\\n"
     ticket.write_text(text, encoding="utf-8")
     subprocess.run(["git", "add", str(ticket)], check=True)
     subprocess.run(["git", "commit", "-qm", "chore(ticket-loop): close 02"], check=True)
@@ -367,14 +424,24 @@ print(json.dumps({"type": "result", "cost_usd": 0.01}))
         self.assertEqual(result.stdout.count("\n"), 1, result.stdout)
         return json.loads(result.stdout)
 
-    def start(self):
+    def start(self, *args):
         return self.cli(
             "start",
             "--tickets",
             self.ticket,
             "--claude-executable",
             self.fake_claude,
+            *args,
         )
+
+    def set_scenario(self, scenario):
+        (self.root / ".ticket-loop" / "scenario").write_text(scenario, encoding="utf-8")
+
+    def recorded_calls(self):
+        return [json.loads(line) for line in self.calls.read_text(encoding="utf-8").splitlines()]
+
+    def ledger(self, run_id):
+        return json.loads((self.root / ".ticket-loop" / "runs" / f"{run_id}.json").read_text(encoding="utf-8"))
 
     def assert_rejected(self, result, code):
         self.assertEqual(result.returncode, 2, result.stderr)
@@ -475,6 +542,130 @@ print(json.dumps({"type": "result", "cost_usd": 0.01}))
         status = self.payload(self.cli("status", "--run", run_id))
         self.assertEqual(status["state"], "running")
         self.assertEqual(json.loads(self.lock_path().read_text(encoding="utf-8"))["run_id"], run_id)
+
+    def test_implementation_failure_resumes_exact_session_with_targeted_prompt(self):
+        started = self.start()
+        start_payload = self.payload(started)
+        run_id = start_payload["run_id"]
+        self.set_scenario("no-commit-once")
+
+        first = self.cli("step", "--run", run_id)
+        self.assert_rejected(first, "implementation-no-commit")
+        status = self.payload(self.cli("status", "--run", run_id))
+        self.assertEqual(status["allowed_actions"], ["resume", "status"])
+
+        resumed = self.cli("resume", "--run", run_id)
+
+        self.assertEqual(resumed.returncode, 0, resumed.stderr)
+        self.assertEqual(self.payload(resumed)["phase"], "closeout")
+        calls = self.recorded_calls()
+        self.assertEqual(len(calls), 2)
+        self.assertIn("--session-id", calls[0])
+        self.assertIn("--resume", calls[1])
+        self.assertEqual(calls[1][calls[1].index("--resume") + 1], start_payload["session_id"])
+        recovery_prompt = calls[1][-1]
+        self.assertIn("implementation-no-commit", recovery_prompt)
+        self.assertIn("Implementation 没有产生新 commit", recovery_prompt)
+        self.assertIn("继续当前 Task Ticket", recovery_prompt)
+        self.assertIn("不得开始其他工单", recovery_prompt)
+        self.assertIn("完成验证与提交", recovery_prompt)
+        self.assertNotIn("/implement", recovery_prompt)
+        self.assertNotIn("cost_usd", recovery_prompt)
+
+    def test_recovers_nonzero_invalid_json_and_is_error_results(self):
+        scenarios = {
+            "nonzero-once": "claude-failed",
+            "invalid-json-once": "invalid-claude-json",
+            "is-error-once": "claude-reported-error",
+        }
+        for scenario, code in scenarios.items():
+            with self.subTest(scenario=scenario):
+                if scenario != "nonzero-once":
+                    self.tearDown()
+                    self.setUp()
+                run_id = self.payload(self.start())["run_id"]
+                self.set_scenario(scenario)
+
+                self.assert_rejected(self.cli("step", "--run", run_id), code)
+                resumed = self.cli("resume", "--run", run_id)
+
+                self.assertEqual(resumed.returncode, 0, resumed.stderr)
+                self.assertEqual(self.payload(resumed)["phase"], "closeout")
+                self.assertIn("--resume", self.recorded_calls()[1])
+
+    def test_timeout_is_recorded_and_resumed_with_configured_deadline(self):
+        started = self.start("--implementation-timeout-seconds", "0.1", "--resume-timeout-seconds", "10")
+        start_payload = self.payload(started)
+        run_id = start_payload["run_id"]
+        self.set_scenario("timeout-once")
+
+        timed_out = self.cli("step", "--run", run_id)
+
+        self.assert_rejected(timed_out, "claude-timeout")
+        ledger = self.ledger(run_id)
+        self.assertEqual(ledger["timeouts"], {"implementation": 0.1, "closeout": 1800.0, "resume": 10.0})
+        self.assertTrue(ledger["claude_calls"][0]["timed_out"])
+        self.assertEqual(ledger["claude_calls"][0]["timeout_seconds"], 0.1)
+        resumed = self.cli("resume", "--run", run_id)
+        self.assertEqual(resumed.returncode, 0, resumed.stderr)
+        self.assertEqual(self.ledger(run_id)["claude_calls"][1]["timeout_seconds"], 10.0)
+
+    def test_timeout_terminates_the_claude_process_group(self):
+        run_id = self.payload(
+            self.start("--implementation-timeout-seconds", "0.1")
+        )["run_id"]
+        self.set_scenario("timeout-child-once")
+
+        self.assert_rejected(self.cli("step", "--run", run_id), "claude-timeout")
+        time.sleep(1.2)
+
+        self.assertFalse((self.root / "late-child.txt").exists())
+
+    def test_resume_rejects_dirty_file_content_changed_after_failure(self):
+        run_id = self.payload(self.start())["run_id"]
+        self.set_scenario("dirty-once")
+        self.assert_rejected(self.cli("step", "--run", run_id), "dirty-worktree")
+        (self.root / "implementation.txt").write_text("externally changed\n", encoding="utf-8")
+
+        failed = self.cli("resume", "--run", run_id)
+
+        self.assert_rejected(failed, "recovery-context-drift")
+        self.assertEqual(self.payload(self.cli("status", "--run", run_id))["state"], "terminal-failure")
+        self.assertEqual(len(self.recorded_calls()), 1)
+
+    def test_resume_allows_dirty_implementation_workspace_and_commits_it(self):
+        for scenario in ("dirty-once", "commit-and-dirty-once"):
+            with self.subTest(scenario=scenario):
+                if scenario != "dirty-once":
+                    self.tearDown()
+                    self.setUp()
+                run_id = self.payload(self.start())["run_id"]
+                self.set_scenario(scenario)
+
+                self.assert_rejected(self.cli("step", "--run", run_id), "dirty-worktree")
+                resumed = self.cli("resume", "--run", run_id)
+
+                self.assertEqual(resumed.returncode, 0, resumed.stderr)
+                self.assertEqual(self.payload(resumed)["phase"], "closeout")
+                self.assertEqual(self.git("status", "--porcelain=v1", "--untracked-files=all"), "")
+
+    def test_implementation_recovery_budget_exhaustion_is_terminal(self):
+        start_payload = self.payload(self.start())
+        run_id = start_payload["run_id"]
+        self.set_scenario("always-error")
+
+        self.assert_rejected(self.cli("step", "--run", run_id), "claude-reported-error")
+        self.assert_rejected(self.cli("resume", "--run", run_id), "claude-reported-error")
+        exhausted = self.cli("resume", "--run", run_id)
+
+        self.assert_rejected(exhausted, "claude-reported-error")
+        status = self.payload(self.cli("status", "--run", run_id))
+        self.assertEqual(status["state"], "terminal-failure")
+        self.assertEqual(status["allowed_actions"], ["status"])
+        self.assertEqual(self.ledger(run_id)["attempts"]["implementation"], {"initial": 1, "resumes": 2})
+        self.assertEqual(len(self.recorded_calls()), 3)
+        self.assertFalse(self.lock_path().exists())
+        self.assert_rejected(self.cli("resume", "--run", run_id), "run-terminal-failure")
 
     def test_post_call_branch_drift_becomes_terminal_failure_and_releases_lock(self):
         started = self.start()
@@ -682,6 +873,38 @@ print(json.dumps({"type": "result", "cost_usd": 0.01}))
         self.assertEqual(closeout.returncode, 0, closeout.stderr)
         self.assertEqual(self.git("rev-parse", "HEAD").strip(), before_closeout)
         self.assertEqual(self.payload(closeout)["state"], "completed")
+
+    def test_closeout_recovery_has_an_independent_budget(self):
+        start_payload = self.payload(self.start())
+        run_id = start_payload["run_id"]
+        self.assertEqual(self.cli("step", "--run", run_id).returncode, 0)
+        self.set_scenario("closeout-always-error")
+
+        self.assert_rejected(self.cli("step", "--run", run_id), "claude-reported-error")
+        self.assert_rejected(self.cli("resume", "--run", run_id), "claude-reported-error")
+        exhausted = self.cli("resume", "--run", run_id)
+
+        self.assert_rejected(exhausted, "claude-reported-error")
+        ledger = self.ledger(run_id)
+        self.assertEqual(ledger["state"], "terminal-failure")
+        self.assertEqual(ledger["attempts"]["implementation"], {"initial": 1, "resumes": 0})
+        self.assertEqual(ledger["attempts"]["closeout"], {"initial": 1, "resumes": 2})
+
+    def test_closeout_dirty_workspace_resumes_to_finish_evidence_and_commit(self):
+        run_id = self.payload(self.start())["run_id"]
+        self.set_scenario("closeout-dirty-once")
+        self.assertEqual(self.cli("step", "--run", run_id).returncode, 0)
+
+        failed = self.cli("step", "--run", run_id)
+        self.assert_rejected(failed, "dirty-worktree")
+        resumed = self.cli("resume", "--run", run_id)
+
+        self.assertEqual(resumed.returncode, 0, resumed.stderr)
+        self.assertEqual(self.payload(resumed)["state"], "completed")
+        recovery_prompt = self.recorded_calls()[2][-1]
+        self.assertIn("dirty-worktree", recovery_prompt)
+        self.assertIn("closeout", recovery_prompt.lower())
+        self.assertEqual(self.git("status", "--porcelain=v1", "--untracked-files=all"), "")
 
     def test_closeout_missing_evidence_stays_running_with_a_structured_gate_failure(self):
         started = self.cli(
