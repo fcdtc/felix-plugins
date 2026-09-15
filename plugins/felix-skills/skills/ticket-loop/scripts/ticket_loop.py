@@ -13,8 +13,10 @@ import os
 from pathlib import Path
 import re
 import signal
+import shutil
 import subprocess
 import sys
+import time
 from typing import Iterable
 import uuid
 
@@ -35,6 +37,8 @@ MAX_PHASE_RESUMES = 2
 DEFAULT_IMPLEMENTATION_TIMEOUT_SECONDS = 90 * 60
 DEFAULT_CLOSEOUT_TIMEOUT_SECONDS = 30 * 60
 DEFAULT_RESUME_TIMEOUT_SECONDS = 30 * 60
+INTERRUPT_GRACE_SECONDS = 1.0
+INCOMPLETE_STATES = {"running", "interrupted", "terminal-failure"}
 FILENAME_RE = re.compile(r"^(?P<id>0[1-9]|[1-9]\d)-.+\.md$")
 FIELD_RE = re.compile(
     r"^\s*(?:\*\*)?(?P<name>What to build|Blocked by|Status|Type)(?:\*\*)?\s*:\s*(?:\*\*)?\s*(?P<value>.*?)\s*$",
@@ -59,9 +63,16 @@ CLOSEOUT_PROMPT = """Close out the current Task Ticket only. Verify every accept
 
 
 class PlanError(Exception):
-    def __init__(self, code: str, message: str):
+    def __init__(self, code: str, message: str, *, exit_code: int = 2):
         super().__init__(message)
         self.code = code
+        self.exit_code = exit_code
+
+
+class ControlledInterrupt(Exception):
+    def __init__(self, signum: int):
+        super().__init__(signal.Signals(signum).name)
+        self.signum = signum
 
 
 @dataclass(frozen=True)
@@ -455,6 +466,19 @@ def ensure_run_lock(ledger: dict[str, object]) -> None:
         raise PlanError("run-lock-mismatch", "仓库锁不属于当前 Loop Run")
 
 
+def set_lock_active_pid(ledger: dict[str, object], pid: int | None) -> None:
+    common = Path(str(ledger["git_common_directory"]))
+    lock = read_run_lock(common)
+    if lock.get("run_id") != ledger["run_id"]:
+        raise PlanError("run-lock-mismatch", "仓库锁不属于当前 Loop Run")
+    lock["active_pid"] = pid
+    path = lock_path(common)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    temporary.write_text(json.dumps(lock, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    os.chmod(temporary, 0o600)
+    temporary.replace(path)
+
+
 def release_run_lock(ledger: dict[str, object]) -> None:
     path = lock_path(Path(str(ledger["git_common_directory"])))
     try:
@@ -473,13 +497,60 @@ def release_run_lock(ledger: dict[str, object]) -> None:
 
 def write_ledger(path: Path, ledger: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    temporary = path.with_suffix(".json.tmp")
-    temporary.write_text(json.dumps(ledger, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    os.chmod(temporary, 0o600)
-    temporary.replace(path)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    descriptor = os.open(temporary, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    try:
+        payload = (json.dumps(ledger, ensure_ascii=False, indent=2) + "\n").encode()
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary.replace(path)
+        directory = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
 
 
-def load_ledger(run_id: str) -> tuple[Path, dict[str, object]]:
+def incomplete_run_ids(repository: Path) -> list[str]:
+    directory = repository / ".ticket-loop" / "runs"
+    if not directory.is_dir():
+        return []
+    candidates: list[str] = []
+    for path in sorted(directory.glob("*.json")):
+        try:
+            ledger = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if (
+            isinstance(ledger, dict)
+            and ledger.get("schema_version") == SCHEMA_VERSION
+            and ledger.get("run_id") == path.stem
+            and ledger.get("state") in INCOMPLETE_STATES
+        ):
+            candidates.append(path.stem)
+    return candidates
+
+
+def resolve_run_id(run_id: str | None) -> str:
+    if run_id:
+        return run_id
+    repository, _ = repository_location(Path.cwd())
+    candidates = incomplete_run_ids(repository)
+    if not candidates:
+        raise PlanError("run-not-found", "当前仓库没有未完成的 Loop Run")
+    if len(candidates) > 1:
+        commands = ", ".join(f"--run {candidate}" for candidate in candidates)
+        raise PlanError("multiple-incomplete-runs", f"存在多个未完成 Loop Run，请精确指定: {commands}")
+    return candidates[0]
+
+
+def load_ledger(run_id: str | None) -> tuple[Path, dict[str, object]]:
+    run_id = resolve_run_id(run_id)
     repository, _ = repository_location(Path.cwd())
     path = ledger_path(repository, run_id)
     try:
@@ -509,11 +580,16 @@ def maintain_local_exclude(repository: Path, common: Path) -> None:
 
 
 def allowed_actions(ledger: dict[str, object]) -> list[str]:
-    if ledger["state"] in {"completed", "terminal-failure"}:
-        return ["status"]
+    state = ledger["state"]
+    if state == "completed":
+        return ["status", "clean"]
+    if state == "aborted":
+        return ["status", "clean"]
+    if state in {"interrupted", "terminal-failure"}:
+        return ["reopen", "status", "abort"]
     if ledger.get("recovery"):
-        return ["resume", "status"]
-    return ["step", "status"]
+        return ["resume", "status", "abort"]
+    return ["step", "status", "abort"]
 
 
 def public_run(ledger: dict[str, object], command: str) -> dict[str, object]:
@@ -534,6 +610,9 @@ def public_run(ledger: dict[str, object], command: str) -> dict[str, object]:
             "ticket_start_head": ledger["ticket_start_head"],
             "implementation_head": ledger.get("implementation_head"),
         },
+        "attempts": ledger.get("attempts", {}),
+        "claude_calls": ledger.get("claude_calls", []),
+        "cost": ledger.get("cost", {"total_usd": 0.0, "unknown": True}),
         "gate_failures": ledger.get("gate_failures", []),
     }
 
@@ -708,6 +787,7 @@ def start_command(args: argparse.Namespace) -> dict[str, object]:
         },
         "recovery": None,
         "claude_calls": [],
+        "cost": {"total_usd": 0.0, "unknown": False},
         "gate_failures": [],
     }
     first_ticket = runnable_ticket(ledger)
@@ -723,6 +803,7 @@ def start_command(args: argparse.Namespace) -> dict[str, object]:
         {
             "schema_version": SCHEMA_VERSION,
             "pid": os.getpid(),
+            "active_pid": None,
             "run_id": run_id,
             "started_at": datetime.now(timezone.utc).isoformat(),
             "repository": str(repository),
@@ -805,12 +886,38 @@ def invoke_claude(
         )
     except OSError as error:
         raise PlanError("claude-launch-failed", f"无法启动 Claude: {error}") from error
+    def note_interrupt(signum: int, _frame: object) -> None:
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        raise ControlledInterrupt(signum)
+
+    previous_handlers = {
+        signum: signal.signal(signum, note_interrupt)
+        for signum in (signal.SIGINT, signal.SIGTERM)
+    }
     try:
         stdout, stderr = process.communicate(timeout=timeout_seconds)
+    except ControlledInterrupt as interrupt:
+        try:
+            stdout, stderr = process.communicate(timeout=INTERRUPT_GRACE_SECONDS)
+        except subprocess.TimeoutExpired:
+            os.killpg(process.pid, signal.SIGKILL)
+            stdout, stderr = process.communicate()
+        call, raw_path = persist_claude_output(
+            ledger, phase, invocation, timeout_seconds, stdout, stderr, process.returncode, False
+        )
+        call["interrupted_by"] = signal.Signals(interrupt.signum).name
+        raise PlanError(
+            "run-interrupted",
+            f"Loop Run 收到 {call['interrupted_by']}；日志: {raw_path}",
+            exit_code=130,
+        ) from interrupt
     except subprocess.TimeoutExpired as error:
         os.killpg(process.pid, signal.SIGTERM)
         try:
-            stdout, stderr = process.communicate(timeout=1)
+            stdout, stderr = process.communicate(timeout=INTERRUPT_GRACE_SECONDS)
         except subprocess.TimeoutExpired:
             os.killpg(process.pid, signal.SIGKILL)
             stdout, stderr = process.communicate()
@@ -818,6 +925,9 @@ def invoke_claude(
             ledger, phase, invocation, timeout_seconds, stdout, stderr, None, True
         )
         raise PlanError("claude-timeout", f"Claude 执行超过 {timeout_seconds:g} 秒；日志: {raw_path}") from error
+    finally:
+        for signum, handler in previous_handlers.items():
+            signal.signal(signum, handler)
 
     call, raw_path = persist_claude_output(
         ledger,
@@ -836,6 +946,12 @@ def invoke_claude(
     if not isinstance(parsed, dict):
         raise PlanError("invalid-claude-json", f"Claude JSON 顶层必须是对象；日志: {raw_path}")
     call["result"] = parsed
+    cost = ledger.setdefault("cost", {"total_usd": 0.0, "unknown": False})
+    reported_cost = parsed.get("cost_usd")
+    if isinstance(reported_cost, (int, float)) and not isinstance(reported_cost, bool):
+        cost["total_usd"] = round(float(cost["total_usd"]) + float(reported_cost), 10)
+    else:
+        cost["unknown"] = True
     if process.returncode:
         raise PlanError("claude-failed", f"Claude 执行失败，退出码 {process.returncode}；日志: {raw_path}")
     if parsed.get("is_error") is True or parsed.get("type") == "error" or parsed.get("subtype") == "error":
@@ -988,12 +1104,17 @@ def recovery_prompt(ledger: dict[str, object], recovery: dict[str, object]) -> s
 def ensure_run_can_invoke(ledger: dict[str, object]) -> None:
     if ledger["state"] == "completed":
         raise PlanError("run-already-completed", "Loop Run 已完成")
+    if ledger["state"] == "aborted":
+        raise PlanError("run-aborted", "Loop Run 已停止调度")
+    if ledger["state"] == "interrupted":
+        raise PlanError("run-interrupted", "Loop Run 已中断，必须显式 reopen")
     if ledger["state"] == "terminal-failure":
         raise PlanError("run-terminal-failure", "Loop Run 已进入 terminal-failure")
 
 
 def invoke_phase(args: argparse.Namespace, *, resume: bool) -> dict[str, object]:
     path, ledger = load_ledger(args.run)
+    reconcile_stale_lock(path, ledger)
     ensure_run_can_invoke(ledger)
     recovery = ledger.get("recovery")
     if resume and not isinstance(recovery, dict):
@@ -1007,6 +1128,7 @@ def invoke_phase(args: argparse.Namespace, *, resume: bool) -> dict[str, object]
     invoked = False
     try:
         repository, head = runtime_git_gate(ledger)
+        set_lock_active_pid(ledger, os.getpid())
         if resume:
             if recovery["phase"] != phase:
                 raise PlanError("recovery-context-drift", "恢复阶段与 Run Ledger 不一致")
@@ -1047,6 +1169,19 @@ def invoke_phase(args: argparse.Namespace, *, resume: bool) -> dict[str, object]
         ledger["gate_failures"] = []
     except PlanError as error:
         ledger["gate_failures"] = [{"code": error.code, "message": str(error)}]
+        if error.code == "run-interrupted":
+            if repository is not None:
+                _, current_head = ensure_repository_matches(ledger)
+                ledger["recovery"] = {
+                    "phase": phase,
+                    "failure": {"code": error.code, "message": str(error)},
+                    "snapshot": recovery_snapshot(repository, current_head),
+                }
+            ledger["state"] = "interrupted"
+            ledger["interrupted_at"] = datetime.now(timezone.utc).isoformat()
+            write_ledger(path, ledger)
+            release_run_lock(ledger)
+            raise
         terminal = error.code in TERMINAL_GIT_ERRORS
         if invoked and not terminal and repository is not None:
             _, current_head = runtime_git_gate(ledger)
@@ -1062,10 +1197,14 @@ def invoke_phase(args: argparse.Namespace, *, resume: bool) -> dict[str, object]
         write_ledger(path, ledger)
         if ledger["state"] == "terminal-failure":
             release_run_lock(ledger)
+        else:
+            set_lock_active_pid(ledger, None)
         raise
     write_ledger(path, ledger)
     if ledger["state"] == "completed":
         release_run_lock(ledger)
+    else:
+        set_lock_active_pid(ledger, None)
     return public_run(ledger, "resume" if resume else "step")
 
 
@@ -1075,6 +1214,108 @@ def step_command(args: argparse.Namespace) -> dict[str, object]:
 
 def resume_command(args: argparse.Namespace) -> dict[str, object]:
     return invoke_phase(args, resume=True)
+
+
+def pid_is_alive(pid: object) -> bool:
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def reconcile_stale_lock(path: Path, ledger: dict[str, object]) -> None:
+    if ledger["state"] != "running":
+        return
+    common = Path(str(ledger["git_common_directory"]))
+    try:
+        lock = read_run_lock(common)
+    except PlanError:
+        return
+    active_pid = lock.get("active_pid")
+    if lock.get("run_id") != ledger["run_id"] or active_pid is None or pid_is_alive(active_pid):
+        return
+    source = lock_path(common)
+    stale = source.parent / "stale"
+    stale.mkdir(parents=True, exist_ok=True, mode=0o700)
+    archived = stale / f"{ledger['run_id']}-{int(time.time())}.json"
+    source.replace(archived)
+    ledger["state"] = "interrupted"
+    ledger["interrupted_at"] = datetime.now(timezone.utc).isoformat()
+    ledger["gate_failures"] = [{"code": "stale-run-lock", "message": "检测到已退出进程遗留的仓库锁"}]
+    write_ledger(path, ledger)
+
+
+def abort_command(args: argparse.Namespace) -> dict[str, object]:
+    path, ledger = load_ledger(args.run)
+    if ledger["state"] == "completed":
+        raise PlanError("run-already-completed", "已完成的 Loop Run 无需 abort")
+    ledger["state"] = "aborted"
+    ledger["aborted_at"] = datetime.now(timezone.utc).isoformat()
+    write_ledger(path, ledger)
+    release_run_lock(ledger)
+    return public_run(ledger, "abort")
+
+
+def reopen_command(args: argparse.Namespace) -> dict[str, object]:
+    path, ledger = load_ledger(args.run)
+    if ledger["state"] not in {"interrupted", "terminal-failure", "aborted"}:
+        raise PlanError("run-not-reopenable", "Loop Run 当前不允许 reopen")
+    repository, head = ensure_repository_matches(ledger)
+    ensure_no_git_operation(repository)
+    start = str(ledger["ticket_start_head"])
+    if run_git(repository, "merge-base", "--is-ancestor", start, head, check=False).returncode:
+        raise PlanError("history-rewritten", "工单起始 HEAD 不再是当前 HEAD 的祖先")
+    recovery = ledger.get("recovery")
+    if isinstance(recovery, dict) and recovery_snapshot(repository, head) != recovery.get("snapshot"):
+        raise PlanError("recovery-context-drift", "Git 现场已在失败后发生变化，无法安全 reopen")
+    if not ledger.get("session_id") or not ledger.get("claude_calls"):
+        raise PlanError("session-unavailable", "原 Task Session 没有可验证的调用记录，拒绝创建新 Session 接管")
+    acquire_run_lock(
+        Path(str(ledger["git_common_directory"])),
+        {
+            "schema_version": SCHEMA_VERSION,
+            "pid": os.getpid(),
+            "active_pid": None,
+            "run_id": ledger["run_id"],
+            "started_at": datetime.now(timezone.utc).isoformat(),
+            "repository": ledger["repository"],
+            "git_common_directory": ledger["git_common_directory"],
+            "branch": ledger["branch"],
+        },
+    )
+    ledger["state"] = "running"
+    ledger["reopened_at"] = datetime.now(timezone.utc).isoformat()
+    try:
+        write_ledger(path, ledger)
+    except BaseException:
+        release_run_lock(ledger)
+        raise
+    return public_run(ledger, "reopen")
+
+
+def clean_command(args: argparse.Namespace) -> dict[str, object]:
+    path, ledger = load_ledger(args.run)
+    if ledger["state"] not in {"completed", "aborted"}:
+        raise PlanError("run-not-terminal", "只有 completed 或 aborted Loop Run 可以 clean")
+    repository = Path(str(ledger["repository"]))
+    expected_path = ledger_path(repository, str(ledger["run_id"]))
+    if path.resolve() != expected_path.resolve():
+        raise PlanError("invalid-run-ledger", "Run Ledger 路径不安全")
+    logs = repository / ".ticket-loop" / "logs" / str(ledger["run_id"])
+    path.unlink()
+    if logs.is_dir():
+        shutil.rmtree(logs)
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "ok": True,
+        "command": "clean",
+        "run_id": ledger["run_id"],
+    }
 
 
 def status_command(args: argparse.Namespace) -> dict[str, object]:
@@ -1129,11 +1370,17 @@ def parser() -> argparse.ArgumentParser:
         default=float(DEFAULT_RESUME_TIMEOUT_SECONDS),
     )
     step = commands.add_parser("step")
-    step.add_argument("--run", required=True)
+    step.add_argument("--run")
     resume = commands.add_parser("resume")
-    resume.add_argument("--run", required=True)
+    resume.add_argument("--run")
+    reopen = commands.add_parser("reopen")
+    reopen.add_argument("--run")
     status = commands.add_parser("status")
-    status.add_argument("--run", required=True)
+    status.add_argument("--run")
+    abort = commands.add_parser("abort")
+    abort.add_argument("--run")
+    clean = commands.add_parser("clean")
+    clean.add_argument("--run", required=True)
     return root
 
 
@@ -1154,8 +1401,14 @@ def main() -> int:
             payload = step_command(args)
         elif command == "resume":
             payload = resume_command(args)
+        elif command == "reopen":
+            payload = reopen_command(args)
         elif command == "status":
             payload = status_command(args)
+        elif command == "abort":
+            payload = abort_command(args)
+        elif command == "clean":
+            payload = clean_command(args)
         else:
             raise PlanError("unsupported-command", f"不支持的命令: {command}")
         emit(payload)
@@ -1170,7 +1423,7 @@ def main() -> int:
             }
         )
         print(str(error), file=sys.stderr)
-        return 2
+        return error.exit_code
 
 
 if __name__ == "__main__":

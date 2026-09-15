@@ -1,6 +1,7 @@
 import json
 import os
 from pathlib import Path
+import signal
 import subprocess
 import sys
 import tempfile
@@ -310,6 +311,12 @@ if scenario == "timeout-child-once" and call_number == 1:
         "import pathlib,time; time.sleep(1); pathlib.Path('late-child.txt').write_text('late')",
     ])
     time.sleep(2)
+if scenario in {"interruptible", "interruptible-ignore-term"}:
+    if scenario == "interruptible-ignore-term":
+        import signal
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    (root / ".ticket-loop" / "claude-ready").write_text("ready", encoding="utf-8")
+    time.sleep(30)
 if scenario == "nonzero-once" and call_number == 1:
     print(json.dumps({"type": "result"}))
     print("fake failure", file=sys.stderr)
@@ -552,7 +559,7 @@ print(json.dumps({"type": "result", "cost_usd": 0.01}))
         first = self.cli("step", "--run", run_id)
         self.assert_rejected(first, "implementation-no-commit")
         status = self.payload(self.cli("status", "--run", run_id))
-        self.assertEqual(status["allowed_actions"], ["resume", "status"])
+        self.assertEqual(status["allowed_actions"], ["resume", "status", "abort"])
 
         resumed = self.cli("resume", "--run", run_id)
 
@@ -661,7 +668,7 @@ print(json.dumps({"type": "result", "cost_usd": 0.01}))
         self.assert_rejected(exhausted, "claude-reported-error")
         status = self.payload(self.cli("status", "--run", run_id))
         self.assertEqual(status["state"], "terminal-failure")
-        self.assertEqual(status["allowed_actions"], ["status"])
+        self.assertEqual(status["allowed_actions"], ["reopen", "status", "abort"])
         self.assertEqual(self.ledger(run_id)["attempts"]["implementation"], {"initial": 1, "resumes": 2})
         self.assertEqual(len(self.recorded_calls()), 3)
         self.assertFalse(self.lock_path().exists())
@@ -678,7 +685,7 @@ print(json.dumps({"type": "result", "cost_usd": 0.01}))
         status = self.payload(self.cli("status", "--run", run_id))
         self.assertEqual(status["state"], "terminal-failure")
         self.assertEqual(status["phase"], "implementation")
-        self.assertEqual(status["allowed_actions"], ["status"])
+        self.assertEqual(status["allowed_actions"], ["reopen", "status", "abort"])
         self.assertFalse(self.lock_path().exists())
         self.assert_rejected(self.cli("step", "--run", run_id), "run-terminal-failure")
 
@@ -819,7 +826,7 @@ print(json.dumps({"type": "result", "cost_usd": 0.01}))
         start_payload = self.payload(started)
         self.assertEqual(start_payload["state"], "running")
         self.assertEqual(start_payload["phase"], "implementation")
-        self.assertEqual(start_payload["allowed_actions"], ["step", "status"])
+        self.assertEqual(start_payload["allowed_actions"], ["step", "status", "abort"])
         run_id = start_payload["run_id"]
         session_id = start_payload["session_id"]
 
@@ -835,7 +842,7 @@ print(json.dumps({"type": "result", "cost_usd": 0.01}))
         closeout_payload = self.payload(closeout)
         self.assertEqual(closeout_payload["state"], "completed")
         self.assertIsNone(closeout_payload["phase"])
-        self.assertEqual(closeout_payload["allowed_actions"], ["status"])
+        self.assertEqual(closeout_payload["allowed_actions"], ["status", "clean"])
         self.assertEqual(self.git("status", "--porcelain=v1", "--untracked-files=all"), "")
         self.assertEqual(self.git("log", "-1", "--pretty=%s").strip(), "chore(ticket-loop): close 02")
         self.assertTrue((self.root / ".ticket-loop" / "runs" / f"{run_id}.json").is_file())
@@ -926,6 +933,160 @@ print(json.dumps({"type": "result", "cost_usd": 0.01}))
         self.assertEqual(status["state"], "running")
         self.assertEqual(status["phase"], "closeout")
         self.assertEqual(status["gate_failures"][0]["code"], "invalid-completion-evidence")
+
+    def test_status_reports_attempts_calls_and_remains_read_only(self):
+        run_id = self.payload(self.start())["run_id"]
+        before = self.ledger(run_id)
+
+        status = self.cli("status", "--run", run_id)
+
+        self.assertEqual(status.returncode, 0, status.stderr)
+        payload = self.payload(status)
+        self.assertEqual(payload["attempts"], before["attempts"])
+        self.assertEqual(payload["claude_calls"], [])
+        self.assertEqual(self.ledger(run_id), before)
+        self.assertFalse(self.calls.exists())
+
+    def test_abort_stops_only_scheduling_and_preserves_git_and_run_artifacts(self):
+        run_id = self.payload(self.start())["run_id"]
+        head = self.git("rev-parse", "HEAD").strip()
+        status = self.git("status", "--porcelain=v1", "--untracked-files=all")
+
+        aborted = self.cli("abort", "--run", run_id)
+
+        self.assertEqual(aborted.returncode, 0, aborted.stderr)
+        payload = self.payload(aborted)
+        self.assertEqual(payload["state"], "aborted")
+        self.assertEqual(payload["allowed_actions"], ["status", "clean"])
+        self.assertFalse(self.lock_path().exists())
+        self.assertEqual(self.git("rev-parse", "HEAD").strip(), head)
+        self.assertEqual(self.git("status", "--porcelain=v1", "--untracked-files=all"), status)
+        self.assertEqual(self.ledger(run_id)["session_id"], payload["session_id"])
+        self.assertTrue((self.root / ".ticket-loop" / "runs" / f"{run_id}.json").exists())
+        self.assertFalse(self.calls.exists())
+
+    def test_clean_requires_terminal_run_and_removes_only_selected_ledger_and_logs(self):
+        first = self.payload(self.start())["run_id"]
+        self.assert_rejected(self.cli("clean", "--run", first), "run-not-terminal")
+        self.assertEqual(self.cli("abort", "--run", first).returncode, 0)
+        first_logs = self.root / ".ticket-loop" / "logs" / first
+        first_logs.mkdir(parents=True)
+        (first_logs / "kept-until-clean.log").write_text("log", encoding="utf-8")
+        unrelated = self.root / ".ticket-loop" / "logs" / "unrelated"
+        unrelated.mkdir()
+        (unrelated / "keep.log").write_text("keep", encoding="utf-8")
+
+        cleaned = self.cli("clean", "--run", first)
+
+        self.assertEqual(cleaned.returncode, 0, cleaned.stderr)
+        payload = self.payload(cleaned)
+        self.assertEqual(payload["command"], "clean")
+        self.assertFalse((self.root / ".ticket-loop" / "runs" / f"{first}.json").exists())
+        self.assertFalse(first_logs.exists())
+        self.assertEqual((unrelated / "keep.log").read_text(encoding="utf-8"), "keep")
+
+    def test_reopen_terminal_failure_revalidates_context_and_never_creates_a_session(self):
+        run_id = self.payload(self.start())["run_id"]
+        self.set_scenario("always-error")
+        self.assert_rejected(self.cli("step", "--run", run_id), "claude-reported-error")
+        self.assert_rejected(self.cli("resume", "--run", run_id), "claude-reported-error")
+        self.assert_rejected(self.cli("resume", "--run", run_id), "claude-reported-error")
+        calls_before = self.recorded_calls()
+
+        reopened = self.cli("reopen", "--run", run_id)
+
+        self.assertEqual(reopened.returncode, 0, reopened.stderr)
+        payload = self.payload(reopened)
+        self.assertEqual(payload["state"], "running")
+        self.assertEqual(payload["allowed_actions"], ["resume", "status", "abort"])
+        self.assertEqual(self.recorded_calls(), calls_before)
+        self.assertEqual(self.ledger(run_id)["session_id"], payload["session_id"])
+        self.assertEqual(json.loads(self.lock_path().read_text(encoding="utf-8"))["run_id"], run_id)
+
+    def test_reopen_fails_closed_when_repository_context_changed(self):
+        run_id = self.payload(self.start())["run_id"]
+        self.set_scenario("no-commit")
+        self.assert_rejected(self.cli("step", "--run", run_id), "implementation-no-commit")
+        self.assertEqual(self.cli("abort", "--run", run_id).returncode, 0)
+        subprocess.run(["git", "-C", str(self.root), "switch", "-qc", "other"], check=True)
+
+        self.assert_rejected(self.cli("reopen", "--run", run_id), "branch-drift")
+        self.assertFalse(self.lock_path().exists())
+        self.assertEqual(self.ledger(run_id)["state"], "aborted")
+
+    def test_reopen_rejects_run_whose_session_was_never_created(self):
+        run_id = self.payload(self.start())["run_id"]
+        self.assertEqual(self.cli("abort", "--run", run_id).returncode, 0)
+
+        self.assert_rejected(self.cli("reopen", "--run", run_id), "session-unavailable")
+        self.assertFalse(self.calls.exists())
+        self.assertFalse(self.lock_path().exists())
+
+    def test_stale_lock_marks_running_run_interrupted_and_unique_step_auto_selects_it(self):
+        run_id = self.payload(self.start())["run_id"]
+        lock = json.loads(self.lock_path().read_text(encoding="utf-8"))
+        lock["active_pid"] = 99999999
+        self.lock_path().write_text(json.dumps(lock), encoding="utf-8")
+
+        interrupted = self.cli("step")
+
+        self.assert_rejected(interrupted, "run-interrupted")
+        payload = self.payload(self.cli("status", "--run", run_id))
+        self.assertEqual(payload["state"], "interrupted")
+        self.assertEqual(payload["allowed_actions"], ["reopen", "status", "abort"])
+        self.assertFalse(self.lock_path().exists())
+        archived = list((self.lock_path().parent / "stale").glob("*.json"))
+        self.assertEqual(len(archived), 1)
+
+    def test_implicit_run_selection_fails_closed_with_multiple_candidates(self):
+        first = self.payload(self.start())["run_id"]
+        self.assertEqual(self.cli("abort", "--run", first).returncode, 0)
+        first_path = self.root / ".ticket-loop" / "runs" / f"{first}.json"
+        first_ledger = json.loads(first_path.read_text(encoding="utf-8"))
+        first_ledger["state"] = "interrupted"
+        first_path.write_text(json.dumps(first_ledger), encoding="utf-8")
+        second = self.payload(self.start())["run_id"]
+        self.assertEqual(self.cli("abort", "--run", second).returncode, 0)
+        second_path = self.root / ".ticket-loop" / "runs" / f"{second}.json"
+        second_ledger = json.loads(second_path.read_text(encoding="utf-8"))
+        second_ledger["state"] = "terminal-failure"
+        second_path.write_text(json.dumps(second_ledger), encoding="utf-8")
+
+        ambiguous = self.cli("status")
+
+        self.assert_rejected(ambiguous, "multiple-incomplete-runs")
+        payload = self.payload(ambiguous)
+        self.assertIn(first, payload["error"]["message"])
+        self.assertIn(second, payload["error"]["message"])
+        self.assertIn("--run", payload["error"]["message"])
+
+    def test_sigterm_interrupts_child_records_run_and_releases_lock(self):
+        run_id = self.payload(self.start())["run_id"]
+        self.set_scenario("interruptible")
+        process = subprocess.Popen(
+            [sys.executable, str(CLI), "step", "--run", run_id],
+            cwd=self.root,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        ready = self.root / ".ticket-loop" / "claude-ready"
+        deadline = time.time() + 5
+        while not ready.exists() and time.time() < deadline:
+            time.sleep(0.02)
+        self.assertTrue(ready.exists())
+
+        process.send_signal(signal.SIGTERM)
+        stdout, stderr = process.communicate(timeout=5)
+
+        self.assertEqual(process.returncode, 130, stderr)
+        payload = json.loads(stdout)
+        self.assertEqual(payload["error"]["code"], "run-interrupted")
+        ledger = self.ledger(run_id)
+        self.assertEqual(ledger["state"], "interrupted")
+        self.assertEqual(ledger["claude_calls"][-1]["interrupted_by"], "SIGTERM")
+        self.assertFalse(self.lock_path().exists())
+        self.assertEqual(ledger["session_id"], self.payload(self.cli("status", "--run", run_id))["session_id"])
 
 
 class TicketLoopManifestRunTests(unittest.TestCase):
