@@ -2,6 +2,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -10,6 +11,8 @@ import unittest
 
 
 CLI = Path(__file__).parents[1] / "scripts" / "ticket_loop.py"
+SUPERVISOR = Path(__file__).parents[1] / "scripts" / "supervise.py"
+SKILL = Path(__file__).parents[1] / "SKILL.md"
 
 
 def task(number, status="ready-for-agent", blocked_by="None", *, bold=True, title="工单"):
@@ -299,7 +302,7 @@ prompt = args[-1]
 scenario_path = root / ".ticket-loop" / "scenario"
 scenario = scenario_path.read_text(encoding="utf-8").strip() if scenario_path.exists() else "default"
 ticket = root / "需求 空间" / "issues" / "02-单工单.md"
-is_initial_implementation = prompt.startswith("/implement ")
+is_initial_implementation = prompt.startswith("/")
 is_implementation = is_initial_implementation or "阶段: implementation" in prompt
 
 if scenario == "timeout-once" and call_number == 1:
@@ -335,18 +338,18 @@ if scenario in {"always-error", "closeout-always-error"} and (
 
 if is_implementation:
     if scenario == "no-commit" or (scenario == "no-commit-once" and call_number == 1):
-        print(json.dumps({"type": "result", "cost_usd": 0.01}))
+        print(json.dumps({"type": "result", "total_cost_usd": 0.01}))
         raise SystemExit(0)
     if scenario == "dirty-once" and call_number == 1:
         (root / "implementation.txt").write_text("implemented\\n", encoding="utf-8")
-        print(json.dumps({"type": "result", "cost_usd": 0.01}))
+        print(json.dumps({"type": "result", "total_cost_usd": 0.01}))
         raise SystemExit(0)
     if scenario == "commit-and-dirty-once" and call_number == 1:
         (root / "implementation.txt").write_text("implemented\\n", encoding="utf-8")
         subprocess.run(["git", "add", "implementation.txt"], check=True)
         subprocess.run(["git", "commit", "-qm", "feat: partial implementation"], check=True)
         (root / "follow-up.txt").write_text("remaining\\n", encoding="utf-8")
-        print(json.dumps({"type": "result", "cost_usd": 0.01}))
+        print(json.dumps({"type": "result", "total_cost_usd": 0.01}))
         raise SystemExit(0)
     if (root / "implementation.txt").exists():
         subprocess.run(["git", "add", "implementation.txt"], check=True)
@@ -391,7 +394,7 @@ elif scenario != "already-closed":
     if scenario == "closeout-dirty-once" and "## Completion evidence" not in text:
         text += "\\n## Completion evidence\\n\\n- Implementation: implementation commit\\n- Typecheck: Not applicable (pure text fixture)\\n- Tests: fake CLI lifecycle passed\\n"
         ticket.write_text(text, encoding="utf-8")
-        print(json.dumps({"type": "result", "cost_usd": 0.01}))
+        print(json.dumps({"type": "result", "total_cost_usd": 0.01}))
         raise SystemExit(0)
     if scenario == "closeout-dirty-once" and "- Review:" not in text:
         text += "- Review: reviewed implementation commit\\n"
@@ -402,7 +405,10 @@ elif scenario != "already-closed":
     ticket.write_text(text, encoding="utf-8")
     subprocess.run(["git", "add", str(ticket)], check=True)
     subprocess.run(["git", "commit", "-qm", "chore(ticket-loop): close 02"], check=True)
-print(json.dumps({"type": "result", "cost_usd": 0.01}))
+result = {"type": "result"}
+if scenario != "no-cost":
+    result["total_cost_usd"] = 0.01
+print(json.dumps(result))
 """,
             encoding="utf-8",
         )
@@ -600,6 +606,98 @@ print(json.dumps({"type": "result", "cost_usd": 0.01}))
                 self.assertEqual(self.payload(resumed)["phase"], "closeout")
                 self.assertIn("--resume", self.recorded_calls()[1])
 
+    def test_start_rejects_non_finite_cost_and_timeout(self):
+        for arguments in (
+            ("--max-cost-usd", "nan"),
+            ("--max-cost-usd", "inf"),
+            ("--implementation-timeout-seconds", "nan"),
+            ("--resume-timeout-seconds", "inf"),
+        ):
+            with self.subTest(arguments=arguments):
+                self.assert_rejected(self.start(*arguments), "invalid-arguments")
+
+    def test_start_freezes_runtime_configuration_in_the_manifest(self):
+        started = self.start(
+            "--implement-command",
+            "mattpocock-skills:implement",
+            "--model",
+            "claude-opus-5",
+            "--max-cost-usd",
+            "2.5",
+        )
+
+        self.assertEqual(started.returncode, 0, started.stderr)
+        ledger = self.ledger(self.payload(started)["run_id"])
+        self.assertEqual(ledger["manifest"]["schema_version"], "1.0")
+        self.assertEqual(
+            ledger["manifest"]["runtime"],
+            {
+                "implement_command": "mattpocock-skills:implement",
+                "model": "claude-opus-5",
+                "permission_mode": "bypassPermissions",
+                "max_cost_usd": 2.5,
+                "timeouts": {"implementation": 5400.0, "closeout": 1800.0, "resume": 1800.0},
+            },
+        )
+
+    def test_start_detects_a_namespaced_implement_command(self):
+        plugin_root = Path(self.temp.name) / "installed-plugin"
+        skill = plugin_root / "skills" / "engineering" / "implement" / "SKILL.md"
+        skill.parent.mkdir(parents=True)
+        skill.write_text("---\nname: implement\n---\n", encoding="utf-8")
+        (plugin_root / ".claude-plugin").mkdir()
+        (plugin_root / ".claude-plugin" / "plugin.json").write_text(
+            json.dumps({"name": "installed-plugin"}), encoding="utf-8"
+        )
+        env = os.environ.copy()
+        env["CLAUDE_PLUGIN_ROOT"] = str(plugin_root)
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(CLI),
+                "start",
+                "--tickets",
+                str(self.ticket),
+                "--claude-executable",
+                str(self.fake_claude),
+            ],
+            cwd=self.root,
+            text=True,
+            capture_output=True,
+            env=env,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        ledger = self.ledger(self.payload(result)["run_id"])
+        self.assertEqual(ledger["manifest"]["runtime"]["implement_command"], "installed-plugin:implement")
+        self.assertEqual(ledger["implementation_prompt"], f"/installed-plugin:implement @{self.ticket.resolve()}")
+
+    def test_cost_limit_stops_before_the_next_claude_call(self):
+        run_id = self.payload(self.start("--max-cost-usd", "0.01"))["run_id"]
+        first = self.cli("step", "--run", run_id)
+        self.assertEqual(first.returncode, 0, first.stderr)
+
+        limited = self.cli("step", "--run", run_id)
+
+        self.assert_rejected(limited, "max-cost-reached")
+        self.assertEqual(len(self.recorded_calls()), 1)
+        status = self.payload(self.cli("status", "--run", run_id))
+        self.assertEqual(status["state"], "terminal-failure")
+        self.assertEqual(status["cost"], {"total_usd": 0.01, "unknown": False, "max_usd": 0.01})
+
+    def test_unknown_cost_stops_before_the_next_claude_call_when_a_limit_is_set(self):
+        run_id = self.payload(self.start("--max-cost-usd", "1"))["run_id"]
+        self.set_scenario("no-cost")
+        first = self.cli("step", "--run", run_id)
+        self.assertEqual(first.returncode, 0, first.stderr)
+
+        limited = self.cli("step", "--run", run_id)
+
+        self.assert_rejected(limited, "cost-unknown")
+        self.assertEqual(len(self.recorded_calls()), 1)
+        self.assertTrue(self.payload(self.cli("status", "--run", run_id))["cost"]["unknown"])
+
     def test_timeout_is_recorded_and_resumed_with_configured_deadline(self):
         started = self.start("--implementation-timeout-seconds", "0.1", "--resume-timeout-seconds", "10")
         start_payload = self.payload(started)
@@ -610,7 +708,7 @@ print(json.dumps({"type": "result", "cost_usd": 0.01}))
 
         self.assert_rejected(timed_out, "claude-timeout")
         ledger = self.ledger(run_id)
-        self.assertEqual(ledger["timeouts"], {"implementation": 0.1, "closeout": 1800.0, "resume": 10.0})
+        self.assertEqual(ledger["manifest"]["runtime"]["timeouts"], {"implementation": 0.1, "closeout": 1800.0, "resume": 10.0})
         self.assertTrue(ledger["claude_calls"][0]["timed_out"])
         self.assertEqual(ledger["claude_calls"][0]["timeout_seconds"], 0.1)
         resumed = self.cli("resume", "--run", run_id)
@@ -934,6 +1032,30 @@ print(json.dumps({"type": "result", "cost_usd": 0.01}))
         self.assertEqual(status["phase"], "closeout")
         self.assertEqual(status["gate_failures"][0]["code"], "invalid-completion-evidence")
 
+    def test_run_artifacts_are_private_and_schema_mismatches_fail_closed(self):
+        run_id = self.payload(self.start())["run_id"]
+        ledger_path = self.root / ".ticket-loop" / "runs" / f"{run_id}.json"
+        self.assertEqual(ledger_path.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(ledger_path.parent.stat().st_mode & 0o777, 0o700)
+
+        self.assertEqual(self.cli("step", "--run", run_id).returncode, 0)
+        logs = self.root / ".ticket-loop" / "logs" / run_id
+        self.assertEqual(logs.stat().st_mode & 0o777, 0o700)
+        for path in logs.iterdir():
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
+        ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+        for corrupt in (
+            lambda manifest: manifest.update(schema_version="999.0"),
+            lambda manifest: manifest["runtime"].update(timeouts={}),
+            lambda manifest: manifest["runtime"].update(max_cost_usd="one dollar"),
+        ):
+            original = json.loads(ledger_path.read_text(encoding="utf-8"))
+            corrupt(original["manifest"])
+            ledger_path.write_text(json.dumps(original), encoding="utf-8")
+            self.assert_rejected(self.cli("status", "--run", run_id), "invalid-run-ledger")
+            ledger_path.write_text(json.dumps(ledger), encoding="utf-8")
+
     def test_status_reports_attempts_calls_and_remains_read_only(self):
         run_id = self.payload(self.start())["run_id"]
         before = self.ledger(run_id)
@@ -1155,7 +1277,7 @@ else:
     ticket.write_text(text, encoding="utf-8")
     subprocess.run(["git", "add", str(ticket)], check=True)
     subprocess.run(["git", "commit", "-qm", f"chore(ticket-loop): close {ticket_id}"], check=True)
-print(json.dumps({"type": "result", "cost_usd": 0.01}))
+print(json.dumps({"type": "result", "total_cost_usd": 0.01}))
 ''',
             encoding="utf-8",
         )
@@ -1319,6 +1441,113 @@ print(json.dumps({"type": "result", "cost_usd": 0.01}))
         self.assertEqual(status["state"], "terminal-failure")
         self.assertEqual(status["active_ticket"], "01")
         self.assertEqual({call["ticket"] for call in self.calls()}, {"01"})
+
+
+class TicketLoopSupervisorTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name) / "supervised repo"
+        self.issues = self.root / "issues"
+        self.issues.mkdir(parents=True)
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True)
+        subprocess.run(["git", "-C", str(self.root), "config", "user.email", "test@example.com"], check=True)
+        subprocess.run(["git", "-C", str(self.root), "config", "user.name", "Test"], check=True)
+        (self.root / "README.md").write_text("fixture\n", encoding="utf-8")
+        one = self.issues / "01-one.md"
+        two = self.issues / "02-two.md"
+        one.write_text(task("01"), encoding="utf-8")
+        two.write_text(task("02", blocked_by="01"), encoding="utf-8")
+        subprocess.run(["git", "-C", str(self.root), "add", "."], check=True)
+        subprocess.run(["git", "-C", str(self.root), "commit", "-qm", "fixture"], check=True)
+        self.fake_claude = Path(self.temp.name) / "supervisor-claude.py"
+        self.fake_claude.write_text(
+            '''#!/usr/bin/env python3
+import json
+from pathlib import Path
+import re
+import subprocess
+import sys
+
+args = sys.argv[1:]
+root = Path.cwd()
+flag = "--resume" if "--resume" in args else "--session-id"
+session_id = args[args.index(flag) + 1]
+prompt = args[-1]
+sessions_path = root / ".ticket-loop" / "supervisor-sessions.json"
+sessions = json.loads(sessions_path.read_text()) if sessions_path.exists() else {}
+if prompt.startswith("/"):
+    ticket = Path(prompt.split(" @", 1)[1])
+    sessions[session_id] = str(ticket)
+    sessions_path.write_text(json.dumps(sessions))
+    phase = "implementation"
+else:
+    ticket = Path(sessions[session_id])
+    phase = "closeout"
+with (root / ".ticket-loop" / "supervisor-calls.jsonl").open("a") as stream:
+    stream.write(json.dumps({"session_id": session_id, "ticket": ticket.name[:2], "phase": phase}) + "\\n")
+if phase == "implementation":
+    output = root / f"implementation-{ticket.name[:2]}.txt"
+    output.write_text("done\\n")
+    subprocess.run(["git", "add", str(output)], check=True)
+    subprocess.run(["git", "commit", "-qm", f"feat: implement {ticket.name[:2]}"], check=True)
+else:
+    implementation = subprocess.run(["git", "rev-parse", "HEAD"], text=True, capture_output=True, check=True).stdout.strip()
+    text = ticket.read_text()
+    text = text.replace("**Status:** ready-for-agent", f"**Status:** done (2026-09-15, {implementation[:7]})")
+    text = re.sub(r"^- \\[ \\]", "- [x]", text, flags=re.MULTILINE)
+    text += "\\n## Completion evidence\\n\\n- Implementation: committed\\n- Typecheck: Not applicable (fixture)\\n- Tests: passed\\n- Review: reviewed\\n"
+    ticket.write_text(text)
+    subprocess.run(["git", "add", str(ticket)], check=True)
+    subprocess.run(["git", "commit", "-qm", f"chore(ticket-loop): close {ticket.name[:2]}"], check=True)
+print(json.dumps({"type": "result", "total_cost_usd": 0.01}))
+''',
+            encoding="utf-8",
+        )
+        self.fake_claude.chmod(0o755)
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def test_skill_entry_drives_a_multi_ticket_run_without_human_intervention(self):
+        text = SKILL.read_text(encoding="utf-8")
+        command_line = next(
+            line.strip() for line in text.splitlines() if line.strip().startswith("python3 ")
+        )
+        arguments = [
+            "--runner", str(CLI),
+            "--issues-dir", str(self.issues),
+            "--claude-executable", str(self.fake_claude),
+            "--implement-command", "implement",
+        ]
+        command_line = command_line.replace("${CLAUDE_SKILL_DIR}", str(SKILL.parent))
+        command_line = command_line.replace("$ARGUMENTS", shlex.join(arguments))
+        result = subprocess.run(
+            shlex.split(command_line),
+            cwd=self.root,
+            text=True,
+            capture_output=True,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["schema_version"], "1.0")
+        self.assertEqual(payload["state"], "completed")
+        calls = [json.loads(line) for line in (self.root / ".ticket-loop" / "supervisor-calls.jsonl").read_text().splitlines()]
+        self.assertEqual([(call["ticket"], call["phase"]) for call in calls], [
+            ("01", "implementation"), ("01", "closeout"),
+            ("02", "implementation"), ("02", "closeout"),
+        ])
+        self.assertNotEqual(calls[0]["session_id"], calls[2]["session_id"])
+        self.assertEqual(subprocess.run(["git", "-C", str(self.root), "status", "--porcelain"], text=True, capture_output=True, check=True).stdout, "")
+
+    def test_skill_is_explicit_and_documents_supervision_and_safety(self):
+        text = SKILL.read_text(encoding="utf-8")
+        self.assertIn("disable-model-invocation: true", text)
+        self.assertIn("protocol_version: 1.0", text)
+        self.assertIn("allowed_actions", text)
+        self.assertIn("bypassPermissions", text)
+        for command in ("plan", "start", "step", "resume", "reopen", "status", "abort", "clean"):
+            self.assertIn(f"`{command}`", text)
 
 
 if __name__ == "__main__":

@@ -9,6 +9,7 @@ from datetime import date, datetime, timezone
 import fcntl
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -22,6 +23,7 @@ import uuid
 
 
 SCHEMA_VERSION = "1.0"
+MANIFEST_SCHEMA_VERSION = "1.0"
 TERMINAL_GIT_ERRORS = {
     "repository-drift",
     "branch-drift",
@@ -32,11 +34,14 @@ TERMINAL_GIT_ERRORS = {
     "recovery-context-drift",
     "frontier-empty",
     "external-blocker-modified",
+    "max-cost-reached",
+    "cost-unknown",
 }
 MAX_PHASE_RESUMES = 2
 DEFAULT_IMPLEMENTATION_TIMEOUT_SECONDS = 90 * 60
 DEFAULT_CLOSEOUT_TIMEOUT_SECONDS = 30 * 60
 DEFAULT_RESUME_TIMEOUT_SECONDS = 30 * 60
+PERMISSION_MODE = "bypassPermissions"
 INTERRUPT_GRACE_SECONDS = 1.0
 INCOMPLETE_STATES = {"running", "interrupted", "terminal-failure"}
 FILENAME_RE = re.compile(r"^(?P<id>0[1-9]|[1-9]\d)-.+\.md$")
@@ -301,6 +306,7 @@ def build_plan(
         if ticket_id not in selected
     }
     return {
+        "schema_version": MANIFEST_SCHEMA_VERSION,
         "issues_directory": str(issues_directory.resolve()),
         "tickets": [
             {
@@ -549,6 +555,45 @@ def resolve_run_id(run_id: str | None) -> str:
     return candidates[0]
 
 
+def validate_manifest(manifest: object, path: Path) -> None:
+    if not isinstance(manifest, dict) or manifest.get("schema_version") != MANIFEST_SCHEMA_VERSION:
+        raise PlanError("invalid-run-ledger", f"Run Manifest 不兼容: {path}")
+    runtime = manifest.get("runtime")
+    if not isinstance(runtime, dict):
+        raise PlanError("invalid-run-ledger", f"Run Manifest 缺少冻结运行配置: {path}")
+    required = {"implement_command", "model", "permission_mode", "max_cost_usd", "timeouts"}
+    if set(runtime) != required or runtime.get("permission_mode") != PERMISSION_MODE:
+        raise PlanError("invalid-run-ledger", f"Run Manifest 运行配置不兼容: {path}")
+    command = runtime.get("implement_command")
+    model = runtime.get("model")
+    maximum = runtime.get("max_cost_usd")
+    timeouts = runtime.get("timeouts")
+    if (
+        not isinstance(command, str)
+        or not command
+        or (model is not None and not isinstance(model, str))
+        or (
+            maximum is not None
+            and (
+                not isinstance(maximum, (int, float))
+                or isinstance(maximum, bool)
+                or not math.isfinite(float(maximum))
+                or maximum <= 0
+            )
+        )
+        or not isinstance(timeouts, dict)
+        or set(timeouts) != {"implementation", "closeout", "resume"}
+        or any(
+            not isinstance(value, (int, float))
+            or isinstance(value, bool)
+            or not math.isfinite(float(value))
+            or value <= 0
+            for value in timeouts.values()
+        )
+    ):
+        raise PlanError("invalid-run-ledger", f"Run Manifest 运行配置无效: {path}")
+
+
 def load_ledger(run_id: str | None) -> tuple[Path, dict[str, object]]:
     run_id = resolve_run_id(run_id)
     repository, _ = repository_location(Path.cwd())
@@ -563,6 +608,7 @@ def load_ledger(run_id: str | None) -> tuple[Path, dict[str, object]]:
         raise PlanError("invalid-run-ledger", f"Run Ledger 不兼容: {path}")
     if ledger.get("schema_version") != SCHEMA_VERSION or ledger.get("run_id") != run_id:
         raise PlanError("invalid-run-ledger", f"Run Ledger 不兼容: {path}")
+    validate_manifest(ledger.get("manifest"), path)
     return path, ledger
 
 
@@ -612,7 +658,7 @@ def public_run(ledger: dict[str, object], command: str) -> dict[str, object]:
         },
         "attempts": ledger.get("attempts", {}),
         "claude_calls": ledger.get("claude_calls", []),
-        "cost": ledger.get("cost", {"total_usd": 0.0, "unknown": True}),
+        "cost": ledger.get("cost", {"total_usd": 0.0, "unknown": True, "max_usd": None}),
         "gate_failures": ledger.get("gate_failures", []),
     }
 
@@ -694,7 +740,7 @@ def activate_ticket(ledger: dict[str, object], ticket: dict[str, object], head: 
             "ticket_path": str(ticket_path),
             "ticket_start_head": head,
             "implementation_head": None,
-            "implementation_prompt": f"/{ledger['implement_command']} @{ticket_path}",
+            "implementation_prompt": f"/{ledger['manifest']['runtime']['implement_command']} @{ticket_path}",
             "closeout_prompt": CLOSEOUT_PROMPT.replace("<today>", date.today().isoformat()).replace(
                 "<ticket-id>", str(ticket["id"])
             ),
@@ -735,6 +781,54 @@ def advance_after_closeout(ledger: dict[str, object], head: str) -> None:
     activate_ticket(ledger, ticket, head)
 
 
+def plugin_name(plugin_root: Path) -> str | None:
+    metadata = plugin_root / ".claude-plugin" / "plugin.json"
+    try:
+        payload = json.loads(metadata.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    name = payload.get("name") if isinstance(payload, dict) else None
+    return name if isinstance(name, str) and name else None
+
+
+def detect_implement_command() -> str:
+    roots: list[Path] = []
+    configured = os.environ.get("CLAUDE_PLUGIN_ROOT")
+    if configured:
+        roots.append(Path(configured).expanduser().resolve())
+    installed = Path.home() / ".claude" / "plugins" / "installed_plugins.json"
+    try:
+        payload = json.loads(installed.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        payload = {}
+    plugins = payload.get("plugins", {}) if isinstance(payload, dict) else {}
+    if isinstance(plugins, dict):
+        for installations in plugins.values():
+            if not isinstance(installations, list):
+                continue
+            for installation in installations:
+                path = installation.get("installPath") if isinstance(installation, dict) else None
+                if isinstance(path, str):
+                    roots.append(Path(path).expanduser().resolve())
+
+    candidates: list[str] = []
+    for root in roots:
+        name = plugin_name(root)
+        if not name:
+            continue
+        for skill in root.glob("skills/**/SKILL.md"):
+            if skill.parent.name == "implement":
+                candidates.append(f"{name}:implement")
+    return sorted(set(candidates))[0] if candidates else "implement"
+
+
+def resolve_implement_command(raw: str | None) -> str:
+    command = (raw or detect_implement_command()).lstrip("/")
+    if not command or any(character.isspace() for character in command):
+        raise PlanError("invalid-implement-command", "实现命令必须是单个 slash command 名称")
+    return command
+
+
 def start_command(args: argparse.Namespace) -> dict[str, object]:
     repository, common, branch, head = repository_identity(Path.cwd())
     ensure_clean(repository)
@@ -747,9 +841,19 @@ def start_command(args: argparse.Namespace) -> dict[str, object]:
 
     maintain_local_exclude(repository, common)
     run_id = str(uuid.uuid4())
-    implement_command = args.implement_command.lstrip("/")
-    if not implement_command or any(character.isspace() for character in implement_command):
-        raise PlanError("invalid-implement-command", "实现命令必须是单个 slash command 名称")
+    implement_command = resolve_implement_command(args.implement_command)
+    runtime = {
+        "implement_command": implement_command,
+        "model": args.model,
+        "permission_mode": PERMISSION_MODE,
+        "max_cost_usd": args.max_cost_usd,
+        "timeouts": {
+            "implementation": args.implementation_timeout_seconds,
+            "closeout": args.closeout_timeout_seconds,
+            "resume": args.resume_timeout_seconds,
+        },
+    }
+    manifest["runtime"] = runtime
     ledger: dict[str, object] = {
         "schema_version": SCHEMA_VERSION,
         "run_id": run_id,
@@ -770,24 +874,17 @@ def start_command(args: argparse.Namespace) -> dict[str, object]:
         "task_sessions": {},
         "active_ticket": None,
         "ticket_path": None,
-        "implement_command": implement_command,
         "implementation_prompt": None,
         "closeout_prompt": None,
         "session_id": None,
         "claude_executable": str(Path(args.claude_executable).expanduser().resolve()) if os.sep in args.claude_executable else args.claude_executable,
-        "model": args.model,
-        "timeouts": {
-            "implementation": args.implementation_timeout_seconds,
-            "closeout": args.closeout_timeout_seconds,
-            "resume": args.resume_timeout_seconds,
-        },
         "attempts": {
             "implementation": {"initial": 0, "resumes": 0},
             "closeout": {"initial": 0, "resumes": 0},
         },
         "recovery": None,
         "claude_calls": [],
-        "cost": {"total_usd": 0.0, "unknown": False},
+        "cost": {"total_usd": 0.0, "unknown": False, "max_usd": args.max_cost_usd},
         "gate_failures": [],
     }
     first_ticket = runnable_ticket(ledger)
@@ -853,6 +950,24 @@ def persist_claude_output(
     return call, raw_path
 
 
+def runtime_config(ledger: dict[str, object]) -> dict[str, object]:
+    return ledger["manifest"]["runtime"]
+
+
+def ensure_cost_allows_call(ledger: dict[str, object]) -> None:
+    maximum = runtime_config(ledger).get("max_cost_usd")
+    if maximum is None:
+        return
+    cost = ledger.get("cost")
+    if not isinstance(cost, dict) or cost.get("unknown") is True:
+        raise PlanError("cost-unknown", "累计费用未知，无法在成本上限下安全启动下一次 Claude 调用")
+    total = cost.get("total_usd")
+    if not isinstance(total, (int, float)) or isinstance(total, bool):
+        raise PlanError("cost-unknown", "累计费用无效，无法在成本上限下安全启动下一次 Claude 调用")
+    if float(total) >= float(maximum):
+        raise PlanError("max-cost-reached", f"累计费用 ${float(total):g} 已达到上限 ${float(maximum):g}")
+
+
 def invoke_claude(
     ledger: dict[str, object],
     phase: str,
@@ -861,17 +976,19 @@ def invoke_claude(
     resume: bool,
     timeout_seconds: float,
 ) -> dict[str, object]:
+    ensure_cost_allows_call(ledger)
     command = [
         str(ledger["claude_executable"]),
         "--print",
         "--output-format",
         "json",
         "--permission-mode",
-        "bypassPermissions",
+        PERMISSION_MODE,
         "--dangerously-skip-permissions",
     ]
-    if ledger.get("model"):
-        command.extend(["--model", str(ledger["model"])])
+    model = runtime_config(ledger).get("model")
+    if model:
+        command.extend(["--model", str(model)])
     command.extend(["--resume" if resume else "--session-id", str(ledger["session_id"])])
     command.append(prompt)
     invocation = "resume" if resume else "initial"
@@ -947,7 +1064,7 @@ def invoke_claude(
         raise PlanError("invalid-claude-json", f"Claude JSON 顶层必须是对象；日志: {raw_path}")
     call["result"] = parsed
     cost = ledger.setdefault("cost", {"total_usd": 0.0, "unknown": False})
-    reported_cost = parsed.get("cost_usd")
+    reported_cost = parsed.get("total_cost_usd")
     if isinstance(reported_cost, (int, float)) and not isinstance(reported_cost, bool):
         cost["total_usd"] = round(float(cost["total_usd"]) + float(reported_cost), 10)
     else:
@@ -1136,12 +1253,12 @@ def invoke_phase(args: argparse.Namespace, *, resume: bool) -> dict[str, object]
             if current != recovery["snapshot"]:
                 raise PlanError("recovery-context-drift", "Git 现场已在失败后发生变化，无法安全恢复")
             prompt = recovery_prompt(ledger, recovery)
-            timeout_seconds = float(ledger["timeouts"]["resume"])
+            timeout_seconds = float(runtime_config(ledger)["timeouts"]["resume"])
             attempts["resumes"] += 1
         else:
             ensure_clean(repository)
             prompt = str(ledger[f"{phase}_prompt"])
-            timeout_seconds = float(ledger["timeouts"][phase])
+            timeout_seconds = float(runtime_config(ledger)["timeouts"][phase])
             attempts["initial"] += 1
         invoked = True
         claude_error: PlanError | None = None
@@ -1333,9 +1450,19 @@ def positive_timeout(value: str) -> float:
         timeout = float(value)
     except ValueError as error:
         raise argparse.ArgumentTypeError("超时必须是秒数") from error
-    if timeout <= 0:
-        raise argparse.ArgumentTypeError("超时必须大于 0 秒")
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise argparse.ArgumentTypeError("超时必须是有限且大于 0 的秒数")
     return timeout
+
+
+def positive_cost(value: str) -> float:
+    try:
+        cost = float(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("最大费用必须是美元数值") from error
+    if not math.isfinite(cost) or cost <= 0:
+        raise argparse.ArgumentTypeError("最大费用必须是有限且大于 0 的美元数值")
+    return cost
 
 
 def add_selection_arguments(command: argparse.ArgumentParser) -> None:
@@ -1352,8 +1479,9 @@ def parser() -> argparse.ArgumentParser:
     start = commands.add_parser("start")
     add_selection_arguments(start)
     start.add_argument("--claude-executable", default="claude")
-    start.add_argument("--implement-command", default="implement")
+    start.add_argument("--implement-command")
     start.add_argument("--model")
+    start.add_argument("--max-cost-usd", type=positive_cost)
     start.add_argument(
         "--implementation-timeout-seconds",
         type=positive_timeout,
