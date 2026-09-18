@@ -24,7 +24,7 @@ Used by `/wayfinder`. The **map** is a file with one **child** file per ticket.
 
 - **Map**: `.scratch/<effort>/map.md` (the Notes / Decisions-so-far / Fog body).
 - **Child ticket**: `.scratch/<effort>/issues/NN-<slug>.md`, numbered from `01`, with the question in the body. A `Type:` line records the ticket type (`research`/`prototype`/`grilling`/`task`); a `Status:` line records `claimed`/`resolved`.
-- **Blocking**: a `Blocked by: NN, NN` line near the top. A ticket is unblocked when every file it lists is `resolved`.
+- **Blocking**: a single `Blocked by:` line near the top. Use `Blocked by: 01, 02` for dependencies (optional titles may follow an ID after `/` or a dash), or `Blocked by: None` when there are none. For compatibility, `None` may include a parenthesized explanation and one trailing sentence mark, such as `Blocked by: None (can start immediately).`; the explanation and punctuation do not become dependencies. Never mix `None` with numbered blockers. Only IDs parsed from this field enter the dependency graph; numbers in titles, explanations, or the body do not.
 - **Frontier**: scan `.scratch/<effort>/issues/` for files that are open, unblocked, and unclaimed; first by number wins.
 - **Claim**: set `Status: claimed` and save before any work.
 - **Resolve**: append the answer under an `## Answer` heading, set `Status: resolved`, then append a context pointer (gist + link) to the map's Decisions-so-far in `map.md`.

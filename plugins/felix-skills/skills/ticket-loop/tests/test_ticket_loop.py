@@ -231,12 +231,40 @@ class TicketLoopPlanTests(unittest.TestCase):
         self.assert_rejected(self.plan("--tickets", one), "dependency-cycle")
 
     def test_accepts_none_with_explanatory_suffix(self):
-        ticket = self.write("01-ticket.md", task("01", blocked_by="None (can start immediately)"))
+        accepted = (
+            "None (can start immediately)",
+            "None (can start immediately).",
+            "None (可以立即开始)。",
+            "None.",
+            "None - can start immediately!",
+            "None / can start immediately?",
+        )
+        ticket = self.write("01-ticket.md", task("01"))
 
-        result = self.plan("--tickets", ticket)
+        for blocked_by in accepted:
+            with self.subTest(blocked_by=blocked_by):
+                ticket.write_text(task("01", blocked_by=blocked_by), encoding="utf-8")
+                result = self.plan("--tickets", ticket)
 
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(self.payload(result)["manifest"]["tickets"][0]["blocked_by"], [])
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(self.payload(result)["manifest"]["tickets"][0]["blocked_by"], [])
+
+    def test_rejects_ambiguous_none_blockers_with_format_guidance(self):
+        rejected = (
+            "None, 01",
+            "None (can start immediately) 01",
+            "None..",
+            "None because it can start",
+        )
+        ticket = self.write("01-ticket.md", task("01"))
+
+        for blocked_by in rejected:
+            with self.subTest(blocked_by=blocked_by):
+                ticket.write_text(task("01", blocked_by=blocked_by), encoding="utf-8")
+                result = self.plan("--tickets", ticket)
+
+                self.assert_rejected(result, "invalid-blocked-by")
+                self.assertIn("None 不能与编号 blocker 混用", self.payload(result)["error"]["message"])
 
     def test_argument_errors_are_structured_json(self):
         result = self.plan("--unknown")
