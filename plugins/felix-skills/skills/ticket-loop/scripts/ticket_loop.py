@@ -58,6 +58,10 @@ FIELD_RE = re.compile(
 WAYFINDER_TYPES = {"research", "prototype", "grilling", "task"}
 WAYFINDER_STATUSES = {"claimed", "resolved"}
 BLOCKER_RE = re.compile(r"^\s*(\d+)(?:\s*(?:/|[-–—])\s*\S.*)?\s*$")
+NO_BLOCKERS_RE = re.compile(
+    r"^\s*None(?:\s+(?:\([^\n]*\)|[-–—/]\s*[^\s.!?。！？](?:[^\n]*?[^\s.!?。！？])?))?[.!?。！？]?\s*$",
+    re.IGNORECASE,
+)
 DONE_RE = re.compile(r"^done\s*\([^()]+\)$", re.IGNORECASE)
 DONE_DETAILS_RE = re.compile(
     r"^done\s*\(\s*(\d{4}-\d{2}-\d{2}),\s*([0-9a-fA-F]{7,40})\s*\)$", re.IGNORECASE
@@ -135,10 +139,17 @@ def extract_fields(text: str, path: Path) -> dict[str, str]:
 
 
 def parse_blockers(raw: str, path: Path) -> tuple[str, ...]:
-    if re.fullmatch(r"\s*None(?:\s+(?:\([^\n]*\)|[-–—/]\s*[^\n]+))?\s*", raw, re.IGNORECASE):
+    if NO_BLOCKERS_RE.fullmatch(raw):
         return ()
     if not raw.strip():
         raise PlanError("invalid-blocked-by", f"Blocked by 字段为空: {path}")
+    if re.match(r"^\s*None\b", raw, re.IGNORECASE):
+        raise PlanError(
+            "invalid-blocked-by",
+            "Blocked by 的 None 格式无效；请使用 None、"
+            "None (can start immediately). 或编号列表 01, 02，且 None 不能与编号 blocker 混用: "
+            f"{path}",
+        )
 
     blockers: list[str] = []
     for part in re.split(r"[,，;；]", raw):
