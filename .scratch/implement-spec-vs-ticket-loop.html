@@ -1,0 +1,529 @@
+<title>工单编排抉择</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Noto+Sans+SC:wght@400;500;600;700&display=swap">
+<style>
+:root {
+  --bg: #edf2f4;
+  --surface: #ffffff;
+  --surface-2: #e4ecef;
+  --ink: #16242d;
+  --muted: #586b75;
+  --line: #b9c9d0;
+  --line-strong: #78909b;
+  --loop: #087f8c;
+  --loop-soft: #d8eff1;
+  --spec: #c45c24;
+  --spec-soft: #fbe7dc;
+  --good: #2f7652;
+  --good-soft: #dcefe5;
+  --warn: #a46808;
+  --warn-soft: #fff0cf;
+  --danger: #a83f3b;
+  --danger-soft: #f8dfdd;
+  --code-bg: #10252f;
+  --code-ink: #eaf5f7;
+  --shadow: 0 14px 40px rgba(22, 36, 45, .10);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #09161c;
+    --surface: #11242d;
+    --surface-2: #19313b;
+    --ink: #e8f1f3;
+    --muted: #a6b8c0;
+    --line: #304b57;
+    --line-strong: #6d8792;
+    --loop: #67cbd0;
+    --loop-soft: #153a40;
+    --spec: #f19a69;
+    --spec-soft: #42291f;
+    --good: #7bc79b;
+    --good-soft: #173828;
+    --warn: #efb75b;
+    --warn-soft: #3a2c14;
+    --danger: #ef8c87;
+    --danger-soft: #402321;
+    --code-bg: #061116;
+    --code-ink: #eaf5f7;
+    --shadow: 0 16px 42px rgba(0, 0, 0, .28);
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #09161c;
+  --surface: #11242d;
+  --surface-2: #19313b;
+  --ink: #e8f1f3;
+  --muted: #a6b8c0;
+  --line: #304b57;
+  --line-strong: #6d8792;
+  --loop: #67cbd0;
+  --loop-soft: #153a40;
+  --spec: #f19a69;
+  --spec-soft: #42291f;
+  --good: #7bc79b;
+  --good-soft: #173828;
+  --warn: #efb75b;
+  --warn-soft: #3a2c14;
+  --danger: #ef8c87;
+  --danger-soft: #402321;
+  --code-bg: #061116;
+  --code-ink: #eaf5f7;
+  --shadow: 0 16px 42px rgba(0, 0, 0, .28);
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  padding-inline: clamp(16px, 4vw, 56px);
+  padding-block: 0 64px;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: "Noto Sans SC", system-ui, sans-serif;
+  font-size: 16px;
+  line-height: 1.72;
+  overflow-x: hidden;
+}
+a { color: var(--loop); text-underline-offset: 3px; }
+a:focus-visible, summary:focus-visible { outline: 3px solid var(--warn); outline-offset: 3px; }
+.shell { width: min(1280px, 100%); margin: 0 auto; }
+.masthead {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(260px, .65fr);
+  gap: clamp(30px, 6vw, 90px);
+  align-items: end;
+  padding-block: clamp(44px, 8vw, 108px) 38px;
+  border-bottom: 1px solid var(--line-strong);
+}
+.eyebrow, .label, .section-no, .ref, th, .chip, .lane-label {
+  font-family: "IBM Plex Mono", monospace;
+}
+.eyebrow, .label, .lane-label {
+  font-size: .72rem;
+  font-weight: 600;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+.eyebrow { color: var(--loop); }
+h1, h2, h3 { font-family: "Archivo", "Noto Sans SC", sans-serif; color: var(--ink); text-wrap: balance; }
+h1 { margin: 12px 0 18px; max-width: 11ch; font-size: clamp(3rem, 7.5vw, 6.8rem); line-height: .92; letter-spacing: -.06em; }
+h2 { margin: 0; font-size: clamp(2rem, 4vw, 3.25rem); line-height: 1.05; letter-spacing: -.04em; }
+h3 { margin: 0; font-size: 1.12rem; line-height: 1.35; }
+p { max-width: 72ch; }
+.deck { margin: 0; max-width: 62ch; color: var(--muted); font-size: clamp(1.05rem, 2vw, 1.3rem); line-height: 1.58; }
+.verdict-stamp { display: grid; gap: 12px; padding-left: 20px; border-left: 4px solid var(--good); }
+.verdict-stamp .label { color: var(--good); }
+.verdict-stamp strong { font: 700 1.45rem/1.25 "Archivo", "Noto Sans SC", sans-serif; }
+.verdict-stamp p { margin: 0; color: var(--muted); font-size: .9rem; }
+.layout { display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: clamp(28px, 5vw, 70px); align-items: start; }
+.toc { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 18px); padding-block: 34px; }
+.toc .label { color: var(--muted); margin-bottom: 12px; }
+.toc a { display: block; padding: 6px 0; color: var(--muted); text-decoration: none; font-size: .84rem; border-bottom: 1px solid transparent; }
+.toc a:hover { color: var(--ink); border-color: var(--line); }
+article { min-width: 0; padding-top: 42px; }
+section { padding-block: 14px 58px; scroll-margin-top: 24px; }
+.section-head { display: grid; grid-template-columns: 50px minmax(0, 1fr); gap: 14px; align-items: baseline; margin-bottom: 22px; }
+.section-no { color: var(--spec); font-size: .76rem; font-weight: 600; }
+.lead { color: var(--muted); font-size: 1.13rem; line-height: 1.66; }
+.thesis {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  margin-block: 28px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+.thesis > div { padding: clamp(22px, 4vw, 38px); }
+.thesis > div + div { border-left: 1px solid var(--line); }
+.thesis .loop { border-top: 6px solid var(--loop); }
+.thesis .spec { border-top: 6px solid var(--spec); }
+.thesis p { color: var(--muted); }
+.chip { display: inline-block; padding: 4px 8px; border-radius: 2px; font-size: .7rem; font-weight: 600; }
+.chip.loop { color: var(--loop); background: var(--loop-soft); }
+.chip.spec { color: var(--spec); background: var(--spec-soft); }
+.chip.good { color: var(--good); background: var(--good-soft); }
+.chip.warn { color: var(--warn); background: var(--warn-soft); }
+.chip.bad { color: var(--danger); background: var(--danger-soft); }
+.callout { max-width: 78ch; margin: 26px 0; padding: 20px 22px; background: var(--good-soft); border-left: 4px solid var(--good); }
+.callout.warn { background: var(--warn-soft); border-color: var(--warn); }
+.callout.danger { background: var(--danger-soft); border-color: var(--danger); }
+.callout p { margin: 5px 0 0; }
+.figure { margin: 28px 0; padding: clamp(16px, 3vw, 28px); background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow); overflow-x: auto; }
+.figure svg { display: block; width: 100%; min-width: 720px; height: auto; color: var(--ink); }
+.figure figcaption { margin-top: 15px; max-width: 78ch; color: var(--muted); font-size: .88rem; }
+.node { fill: var(--surface-2); stroke: var(--line-strong); stroke-width: 1.5; }
+.node.loop { fill: var(--loop-soft); stroke: var(--loop); stroke-width: 2; }
+.node.spec { fill: var(--spec-soft); stroke: var(--spec); stroke-width: 2; }
+.svg-text { fill: var(--ink); font-family: "Noto Sans SC", sans-serif; font-size: 13px; font-weight: 600; }
+.svg-small { fill: var(--muted); font-family: "IBM Plex Mono", monospace; font-size: 10px; }
+.svg-line { fill: none; stroke: var(--line-strong); stroke-width: 1.7; marker-end: url(#arrow); }
+.svg-loop { stroke: var(--loop); }
+.svg-spec { stroke: var(--spec); }
+.matrix-wrap { margin: 22px 0; overflow-x: auto; }
+table { width: 100%; min-width: 760px; border-collapse: collapse; background: var(--surface); font-size: .9rem; }
+th { padding: 12px 13px; text-align: left; color: var(--muted); border-bottom: 2px solid var(--line-strong); font-size: .7rem; text-transform: uppercase; letter-spacing: .06em; }
+td { padding: 14px 13px; vertical-align: top; border-bottom: 1px solid var(--line); }
+tbody tr:last-child td { border-bottom: 0; }
+td:first-child { font-weight: 600; }
+.winner-loop td:first-child { box-shadow: inset 3px 0 var(--loop); }
+.winner-spec td:first-child { box-shadow: inset 3px 0 var(--spec); }
+.split { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; }
+.lane { padding-top: 14px; border-top: 4px solid var(--line-strong); }
+.lane.loop { border-color: var(--loop); }
+.lane.spec { border-color: var(--spec); }
+.lane-label.loop { color: var(--loop); }
+.lane-label.spec { color: var(--spec); }
+ul, ol { max-width: 72ch; padding-left: 1.25rem; }
+li + li { margin-top: 7px; }
+.decision-list { display: grid; gap: 0; border-top: 1px solid var(--line-strong); }
+.decision-row { display: grid; grid-template-columns: minmax(170px, .7fr) minmax(0, 1.3fr); gap: 24px; padding: 20px 0; border-bottom: 1px solid var(--line); }
+.decision-row p { margin: 3px 0 0; color: var(--muted); }
+.hybrid { padding: clamp(24px, 4vw, 42px); background: var(--code-bg); color: var(--code-ink); box-shadow: var(--shadow); }
+.hybrid h2, .hybrid h3 { color: var(--code-ink); }
+.hybrid p { color: color-mix(in srgb, var(--code-ink) 74%, transparent); }
+.hybrid-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 34px; margin-top: 26px; }
+.hybrid ul { margin-bottom: 0; }
+pre { padding: 18px 20px; overflow-x: auto; background: var(--code-bg); color: var(--code-ink); font: 500 .84rem/1.65 "IBM Plex Mono", monospace; }
+code { font-family: "IBM Plex Mono", monospace; font-size: .9em; }
+p code, li code, td code { padding: .1em .32em; color: var(--loop); background: var(--loop-soft); overflow-wrap: anywhere; }
+.ref { color: var(--muted); font-size: .74rem; line-height: 1.55; overflow-wrap: anywhere; }
+details { border-top: 1px solid var(--line); }
+summary { cursor: pointer; padding: 15px 0; font-weight: 600; }
+details > div { padding: 0 0 18px 20px; color: var(--muted); }
+.footer { display: flex; justify-content: space-between; gap: 20px; flex-wrap: wrap; padding-top: 26px; border-top: 1px solid var(--line-strong); color: var(--muted); font-size: .78rem; }
+@media (max-width: 850px) {
+  .masthead, .layout { grid-template-columns: 1fr; }
+  .toc { position: static; columns: 2; padding-block: 24px 0; }
+  .toc .label { column-span: all; }
+  article { padding-top: 28px; }
+  .split, .hybrid-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 620px) {
+  .thesis { grid-template-columns: 1fr; }
+  .thesis > div + div { border-left: 0; border-top: 1px solid var(--line); }
+  .decision-row { grid-template-columns: 1fr; gap: 5px; }
+}
+@media (max-width: 460px) {
+  .toc { columns: 1; }
+  .section-head { grid-template-columns: 38px minmax(0, 1fr); gap: 8px; }
+}
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+</style>
+
+<div class="shell">
+  <header class="masthead">
+    <div>
+      <div class="eyebrow">engineering decision / ticket orchestration</div>
+      <h1>工单编排抉择</h1>
+      <p class="deck">同样面对一个目录中的 Ticket 任务图，<code>implement-spec</code> 追求并行交付 PR，<code>ticket-loop</code> 追求串行、可恢复地完成本地提交。关键不是谁绝对更强，而是谁把你最在意的失败模式管住。</p>
+    </div>
+    <aside class="verdict-stamp" aria-label="综合结论">
+      <span class="label">默认结论</span>
+      <strong>可靠完成：选 Ticket Loop</strong>
+      <p>只有当 DAG 足够宽、Ticket 低耦合、PR 是明确终点，并且有人监督时，才优先 implement-spec。</p>
+    </aside>
+  </header>
+
+  <div class="layout">
+    <nav class="toc" aria-label="报告目录">
+      <div class="label">目录</div>
+      <a href="#answer">结论先行</a>
+      <a href="#mechanism">机制差异</a>
+      <a href="#matrix">逐项对比</a>
+      <a href="#strengths">各自优劣</a>
+      <a href="#failure">失败与恢复</a>
+      <a href="#quality">质量闭环</a>
+      <a href="#decision">怎么选择</a>
+      <a href="#hybrid">推荐演进</a>
+      <a href="#evidence">证据边界</a>
+    </nav>
+
+    <article>
+      <section id="answer">
+        <div class="section-head"><span class="section-no">00</span><h2>结论先行</h2></div>
+        <p class="lead">两者不是同一层级的实现：<code>ticket-loop</code> 是有代码、有账本、有状态机和行为测试的 workflow runtime；<code>implement-spec</code> 是交给主 Agent 执行的多 Agent 编排规程。前者牺牲吞吐量换确定性，后者牺牲确定性换并发与完整 PR 生命周期。</p>
+
+        <div class="thesis">
+          <div class="loop">
+            <span class="chip loop">ticket-loop</span>
+            <h3>更像可靠的本地执行器</h3>
+            <p>冻结 Manifest，串行选择 frontier，用 Git、Ticket 内容和 Session ID 做硬门禁；中断后可验证现场并恢复原 Session。</p>
+            <strong>胜在：恢复、审计、无人值守、确定性。</strong>
+          </div>
+          <div class="spec">
+            <span class="chip spec">implement-spec</span>
+            <h3>更像并行交付作战手册</h3>
+            <p>主 Agent 理解任务图，给每张可运行 Ticket 分配独立 worktree/branch，再由 merger 汇总到 draft PR。</p>
+            <strong>胜在：吞吐、隔离、PR 交付、跨票集成审查。</strong>
+          </div>
+        </div>
+
+        <div class="callout">
+          <strong>综合判断</strong>
+          <p>如果问题表述只是“把这个目录里的 Ticket 可靠做完”，默认选 <code>ticket-loop</code>。如果问题表述是“尽快把一个宽而浅的任务图变成可审查 PR”，再选 <code>implement-spec</code>。</p>
+        </div>
+      </section>
+
+      <section id="mechanism">
+        <div class="section-head"><span class="section-no">01</span><h2>机制差异不是串行与并行这么简单</h2></div>
+        <figure class="figure">
+          <div class="label">两条执行路径</div>
+          <svg viewBox="0 0 980 500" role="img" aria-label="Ticket Loop 的持久状态机串行路径与 implement-spec 的并行 worktree 路径对比">
+            <defs>
+              <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="currentColor"></path></marker>
+            </defs>
+            <text class="svg-text" x="28" y="38">Ticket Loop</text>
+            <text class="svg-small" x="148" y="38">确定性控制平面</text>
+            <rect class="node loop" x="28" y="66" width="148" height="70" rx="3"></rect>
+            <text class="svg-text" x="102" y="95" text-anchor="middle">Manifest</text>
+            <text class="svg-small" x="102" y="116" text-anchor="middle">冻结任务图</text>
+            <rect class="node loop" x="224" y="66" width="148" height="70" rx="3"></rect>
+            <text class="svg-text" x="298" y="95" text-anchor="middle">Runner</text>
+            <text class="svg-small" x="298" y="116" text-anchor="middle">选最小 frontier</text>
+            <rect class="node" x="420" y="66" width="148" height="70" rx="3"></rect>
+            <text class="svg-text" x="494" y="95" text-anchor="middle">Ticket Session</text>
+            <text class="svg-small" x="494" y="116" text-anchor="middle">实现 + closeout</text>
+            <rect class="node loop" x="616" y="66" width="148" height="70" rx="3"></rect>
+            <text class="svg-text" x="690" y="95" text-anchor="middle">硬门禁</text>
+            <text class="svg-small" x="690" y="116" text-anchor="middle">Git + evidence</text>
+            <rect class="node" x="812" y="66" width="140" height="70" rx="3"></rect>
+            <text class="svg-text" x="882" y="95" text-anchor="middle">下一张票</text>
+            <text class="svg-small" x="882" y="116" text-anchor="middle">同一分支</text>
+            <path class="svg-line svg-loop" d="M176 101 H224"></path>
+            <path class="svg-line svg-loop" d="M372 101 H420"></path>
+            <path class="svg-line svg-loop" d="M568 101 H616"></path>
+            <path class="svg-line svg-loop" d="M764 101 H812"></path>
+            <path class="svg-line svg-loop" d="M690 136 C690 188 298 188 298 136"></path>
+            <text class="svg-small" x="494" y="178" text-anchor="middle">失败：Ledger 记录现场 → resume 原 Session</text>
+
+            <line x1="28" y1="238" x2="952" y2="238" stroke="var(--line)" stroke-width="1"></line>
+            <text class="svg-text" x="28" y="282">implement-spec</text>
+            <text class="svg-small" x="162" y="282">LLM 主 Agent 控制平面</text>
+            <rect class="node spec" x="28" y="310" width="148" height="70" rx="3"></rect>
+            <text class="svg-text" x="102" y="339" text-anchor="middle">主 Agent</text>
+            <text class="svg-small" x="102" y="360" text-anchor="middle">解释 frontier</text>
+            <rect class="node" x="242" y="274" width="156" height="62" rx="3"></rect>
+            <text class="svg-text" x="320" y="301" text-anchor="middle">Worktree A</text>
+            <text class="svg-small" x="320" y="320" text-anchor="middle">Ticket 01</text>
+            <rect class="node" x="242" y="354" width="156" height="62" rx="3"></rect>
+            <text class="svg-text" x="320" y="381" text-anchor="middle">Worktree B</text>
+            <text class="svg-small" x="320" y="400" text-anchor="middle">Ticket 02</text>
+            <rect class="node" x="242" y="434" width="156" height="62" rx="3"></rect>
+            <text class="svg-text" x="320" y="461" text-anchor="middle">Worktree C</text>
+            <text class="svg-small" x="320" y="480" text-anchor="middle">Ticket 03</text>
+            <rect class="node spec" x="494" y="336" width="156" height="74" rx="3"></rect>
+            <text class="svg-text" x="572" y="365" text-anchor="middle">Merger</text>
+            <text class="svg-small" x="572" y="386" text-anchor="middle">串行合入 PR branch</text>
+            <rect class="node spec" x="724" y="336" width="200" height="74" rx="3"></rect>
+            <text class="svg-text" x="824" y="365" text-anchor="middle">Draft PR</text>
+            <text class="svg-small" x="824" y="386" text-anchor="middle">review → fix → ready</text>
+            <path class="svg-line svg-spec" d="M176 345 C202 345 208 305 242 305"></path>
+            <path class="svg-line svg-spec" d="M176 345 H242"></path>
+            <path class="svg-line svg-spec" d="M176 345 C202 345 208 465 242 465"></path>
+            <path class="svg-line svg-spec" d="M398 305 C444 305 448 350 494 359"></path>
+            <path class="svg-line svg-spec" d="M398 385 H494"></path>
+            <path class="svg-line svg-spec" d="M398 465 C444 465 448 396 494 387"></path>
+            <path class="svg-line svg-spec" d="M650 373 H724"></path>
+          </svg>
+          <figcaption>关键差异在控制权：Ticket Loop 由程序状态机批准每次推进；implement-spec 由主 Agent 解释图、调度 Agent、处理合并并判断完成。worktree 解决“同时写文件”的隔离，但没有自动解决语义冲突和恢复。</figcaption>
+        </figure>
+      </section>
+
+      <section id="matrix">
+        <div class="section-head"><span class="section-no">02</span><h2>逐项对比</h2></div>
+        <div class="matrix-wrap">
+          <table>
+            <thead><tr><th>维度</th><th>ticket-loop</th><th>implement-spec</th><th>更优者</th></tr></thead>
+            <tbody>
+              <tr class="winner-loop"><td>任务图解析</td><td>固定字段、环检测、缺失依赖检查、冻结 Manifest、确定性 frontier</td><td>主 Agent 语义理解；格式、环检测和排序未定义</td><td><span class="chip loop">ticket-loop</span></td></tr>
+              <tr class="winner-spec"><td>并发吞吐</td><td>仓库级串行；宽 frontier 也只取编号最小者</td><td>frontier Ticket 后台并发，每票独立 worktree/branch</td><td><span class="chip spec">implement-spec</span></td></tr>
+              <tr class="winner-spec"><td>工作区隔离</td><td>Session 隔离，但共享当前分支和工作区</td><td>每票独立 worktree，失败不直接污染其他票</td><td><span class="chip spec">implement-spec</span></td></tr>
+              <tr class="winner-loop"><td>状态持久化</td><td>Versioned Ledger 记录 HEAD、Session、阶段、调用、成本、失败现场</td><td>主要依赖 Agent 上下文、分支、worktree 和 PR；无编排账本</td><td><span class="chip loop">ticket-loop</span></td></tr>
+              <tr class="winner-loop"><td>中断恢复</td><td>现场指纹校验、原 Session resume、重试上限、stale process 处理</td><td>未定义超时、重试、孤儿 worktree 或主 Session 丢失后的恢复</td><td><span class="chip loop">ticket-loop</span></td></tr>
+              <tr class="winner-loop"><td>完成判定</td><td>Git 历史、干净工作区、Checklist、Status、Evidence 的机器门禁</td><td>依赖 implementer/merger/主 Agent 的流程遵循和结果判断</td><td><span class="chip loop">ticket-loop</span></td></tr>
+              <tr class="winner-loop"><td>实现 Skill 约束</td><td>固定构造 <code>/implement @ticket</code>，每票统一经过 implementation、closeout 和恢复流程</td><td>只定义 implementer 角色，没有规定必须调用 <code>/implement</code>；subagent 可自行选择实现流程</td><td><span class="chip loop">ticket-loop</span></td></tr>
+              <tr class="winner-spec"><td>集成级审查</td><td>逐票 review/evidence；Runner 不独立执行集成 review</td><td>全部合并后在 PR branch 统一 code review</td><td><span class="chip spec">implement-spec</span></td></tr>
+              <tr class="winner-spec"><td>PR 生命周期</td><td>不建分支/worktree/PR，不 push</td><td>draft PR → 并行实施 → review/fix → ready</td><td><span class="chip spec">implement-spec</span></td></tr>
+              <tr class="winner-loop"><td>成本边界</td><td>记录累计成本，支持调用前上限、模型与 timeout 固化</td><td>无并发上限、预算、超时、重试或模型策略</td><td><span class="chip loop">ticket-loop</span></td></tr>
+              <tr class="winner-loop"><td>实现成熟度</td><td>Python Runner、Supervisor 与大量真实 Git/subprocess 行为测试</td><td>约 35 行流程说明，无配套状态机或测试</td><td><span class="chip loop">ticket-loop</span></td></tr>
+              <tr><td>人机边界</td><td>适合预授权 AFK，但使用高权限执行，不是沙箱</td><td>更适合在线监督；远程 PR 副作用与权限策略未写明</td><td><span class="chip warn">取决于场景</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="ref">主要依据：<code>plugins/felix-skills/skills/ticket-loop/scripts/ticket_loop.py:104-355, 441-567, 701-968, 1014-1498, 1588-1734</code>；<code>scripts/supervise.py:90-131</code>；用户提供的 <code>implement-spec</code> Step 1–9。</p>
+      </section>
+
+      <section id="strengths">
+        <div class="section-head"><span class="section-no">03</span><h2>各自的优势与代价</h2></div>
+        <div class="split">
+          <div class="lane loop">
+            <div class="lane-label loop">ticket-loop / strong points</div>
+            <h3>为什么它更可靠</h3>
+            <ul>
+              <li><strong>控制平面是代码。</strong> Claude 负责实现，Runner 负责决定能否推进。</li>
+              <li><strong>失败是一级状态。</strong> Gate failure、interrupted、terminal-failure、aborted 都有明确动作集合。</li>
+              <li><strong>恢复不靠猜。</strong> 先比较分支、HEAD、status 和内容 fingerprint，再恢复精确 Session。</li>
+              <li><strong>范围不会漂移。</strong> 启动时冻结 Manifest，运行中新增 Ticket 不会被悄悄吸收。</li>
+              <li><strong>审计链完整。</strong> Ledger、原始 Claude JSON、stderr、提交和 Ticket evidence 可追溯。</li>
+            </ul>
+            <h3>它为此付出的代价</h3>
+            <ul>
+              <li>所有 Ticket 串行，一个慢票会阻塞整条链。</li>
+              <li>没有 worktree/branch 隔离，半成品留在当前工作区。</li>
+              <li>不负责 draft PR、push、merge 或 ready-for-review。</li>
+              <li>Completion evidence 是结构门禁，不等同于 Runner 独立重跑测试。</li>
+              <li>依赖 POSIX 锁和进程组，不是跨平台实现。</li>
+            </ul>
+          </div>
+          <div class="lane spec">
+            <div class="lane-label spec">implement-spec / strong points</div>
+            <h3>为什么它更快、更像交付流程</h3>
+            <ul>
+              <li><strong>利用宽 frontier。</strong> 无依赖 Ticket 可同时实施，显著缩短 wall-clock。</li>
+              <li><strong>文件系统隔离。</strong> 每个 implementer 有自己的 worktree 和 branch。</li>
+              <li><strong>交付终点明确。</strong> 从 draft PR 开始，以 ready-for-review 结束。</li>
+              <li><strong>上下文传播克制。</strong> 通过 spec、ticket、研究笔记和 commits 传递事实。</li>
+              <li><strong>有集成视角。</strong> 全部合并后统一 code review，可发现跨票问题。</li>
+            </ul>
+            <h3>它尚未定义的关键能力</h3>
+            <ul>
+              <li>没有持久的 Ticket → Agent → worktree → branch → merge 映射。</li>
+              <li>没有并发上限、timeout、重试预算或成本门限。</li>
+              <li>没有 merge queue、冲突升级和过时 base SHA 策略。</li>
+              <li>没有主 Agent 中断后的恢复或孤儿 worktree 清理协议。</li>
+              <li>review 后只规定一次 fix，没有要求复审到零阻塞项。</li>
+            </ul>
+          </div>
+        </div>
+        <div class="callout warn">
+          <strong>关键差别：implementer 不是 <code>/implement</code> 的同义词</strong>
+          <p><code>ticket-loop</code> 会在 Runner 中固定构造 <code>/implement @&lt;ticket&gt;</code>，因此每张票都进入统一的 implementation、closeout、测试与提交流程。<code>implement-spec</code> 只要求启动名为 implementer 的 subagent，并没有规定它必须调用 <code>/implement</code>；实现方式、测试、review、commit 和完成证据主要依赖主 Agent 与 subagent 自行遵循。</p>
+          <p>因此，<code>implement-spec</code> 的并行能力之外还存在一个流程一致性风险：不同 implementer 可能采用不同实现纪律。若要补齐，应明确要求每个 implementer 执行 <code>/implement @ticket</code>，只在自己的 worktree/branch 中工作，并返回 implementation commit、测试结果、review 结果和剩余 blocker。</p>
+        </div>
+      </section>
+
+      <section id="failure">
+        <div class="section-head"><span class="section-no">04</span><h2>真正拉开差距的是失败路径</h2></div>
+        <p class="lead">成功路径上，两者都可能完成代码；当 Claude 超时、分支漂移、实现只做了一半、主 Session 中断或 merge 冲突时，才会看见系统设计的成熟度。</p>
+        <div class="matrix-wrap">
+          <table>
+            <thead><tr><th>故障</th><th>ticket-loop</th><th>implement-spec</th></tr></thead>
+            <tbody>
+              <tr><td>Agent 输出成功但未提交</td><td>Implementation Gate 拒绝，记录现场并允许 resume</td><td>依赖主 Agent 或 merger 发现</td></tr>
+              <tr><td>工作区有未提交修改</td><td>门禁失败；恢复前要求现场 fingerprint 不变</td><td>worktree 可保留半成品，但后续动作未定义</td></tr>
+              <tr><td>调用超时</td><td>终止进程组、留存日志、进入恢复路径</td><td>无 timeout/retry 规范</td></tr>
+              <tr><td>Runner/主 Agent 被杀</td><td>Ledger + lock + PID/PGID 支持识别 stale child 与 reopen</td><td>只能从分支、worktree、PR 人工重建状态</td></tr>
+              <tr><td>分支或历史被外部修改</td><td>fail closed，拒绝在不可信现场继续</td><td>没有显式漂移检测</td></tr>
+              <tr><td>并行票修改相同模块</td><td>不会并行，规避该类冲突</td><td>直到 merge 或集成测试时才暴露</td></tr>
+              <tr><td>恢复额度耗尽</td><td>每阶段最多两次 resume，之后 terminal-failure</td><td>没有重试预算，可能重复启动 Agent</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout danger">
+          <strong>注意：Ticket Loop 的高可靠性不等于安全沙箱</strong>
+          <p>它以跳过工具权限确认的方式运行任务 Session。Git 门禁能保护仓库结果与恢复现场，却不能阻止恶意脚本、凭据读取或仓库外副作用；只能在可信仓库、Skill、Hook、MCP 和依赖链上使用。</p>
+        </div>
+      </section>
+
+      <section id="quality">
+        <div class="section-head"><span class="section-no">05</span><h2>两者的质量闭环都还差最后一步</h2></div>
+        <div class="split">
+          <div class="lane loop">
+            <span class="chip loop">逐票闭环</span>
+            <h3>Ticket Loop</h3>
+            <p>每票调用 <code>/implement</code>，随后 closeout 校验 Checklist、Status、Implementation commit 与 Typecheck / Tests / Review evidence。强项是流程证据可机器检查。</p>
+            <p><strong>缺口：</strong>Runner 本身不重新运行项目测试，也不证明 review 的语义质量；文本 evidence 仍可能只是声明。</p>
+          </div>
+          <div class="lane spec">
+            <span class="chip spec">集成闭环</span>
+            <h3>implement-spec</h3>
+            <p>所有 Ticket 合并后，在 PR branch 统一运行 <code>/code-review</code>，再由一个 implementer 修复 findings。强项是能看到跨 Ticket 的集成结果。</p>
+            <p><strong>缺口：</strong>没有规定修复后再次 review，也没有机器 Gate 证明所有阻塞 findings 和集成测试已清零。</p>
+          </div>
+        </div>
+        <div class="callout warn">
+          <strong>更完整的标准应是</strong>
+          <p>逐票局部验证 → merge 后集成测试 → PR 级 code review → 集中修复 → 再次 review → 零阻塞项且测试通过后才 ready。</p>
+        </div>
+      </section>
+
+      <section id="decision">
+        <div class="section-head"><span class="section-no">06</span><h2>按任务特征选择，不按工具名选择</h2></div>
+        <div class="decision-list">
+          <div class="decision-row"><h3>依赖紧密、基本线性</h3><p><span class="chip loop">选 ticket-loop</span> 后一票必须消费前一票的真实代码，串行反而减少返工和合并不确定性。</p></div>
+          <div class="decision-row"><h3>宽而浅、模块边界清楚</h3><p><span class="chip spec">选 implement-spec</span> 并行收益明确，且不同 Ticket 很少触碰相同文件和公共抽象。</p></div>
+          <div class="decision-row"><h3>夜间 AFK / 长时无人值守</h3><p><span class="chip loop">选 ticket-loop</span> Ledger、锁、原 Session 恢复和硬门禁比并发速度更重要。</p></div>
+          <div class="decision-row"><h3>最终必须直接形成 PR</h3><p><span class="chip spec">选 implement-spec</span> 它原生覆盖 branch、draft PR、merge、review、ready 与 worktree 清理。</p></div>
+          <div class="decision-row"><h3>预算严格、资源受限</h3><p><span class="chip loop">选 ticket-loop</span> 有累计成本、timeout 与有限重试；implement-spec 的最大并发可能放大 token、CPU 和测试资源消耗。</p></div>
+          <div class="decision-row"><h3>不允许远程副作用</h3><p><span class="chip loop">选 ticket-loop</span> 它明确不 push、不建 PR；implement-spec 的 draft PR 是核心步骤。</p></div>
+          <div class="decision-row"><h3>当前工作目录不能被占用</h3><p><span class="chip spec">选 implement-spec</span> 独立 worktree 更适合与人的当前工作并存。</p></div>
+          <div class="decision-row"><h3>隐含依赖很多、Ticket 质量一般</h3><p><span class="chip loop">优先 ticket-loop</span> 先接受较慢的串行，直到任务图和模块边界足够可信再引入并发。</p></div>
+        </div>
+      </section>
+
+      <section id="hybrid">
+        <div class="hybrid">
+          <div class="section-head"><span class="section-no">07</span><h2>最佳长期方案：确定性控制面 + 有界并行</h2></div>
+          <p>若要演进项目能力，最值得做的不是让其中一个完全取代另一个，而是把 Ticket Loop 的“可恢复控制面”与 implement-spec 的“worktree 隔离和 PR 交付面”组合起来。</p>
+          <div class="hybrid-grid">
+            <div>
+              <h3>保留 Ticket Loop 的部分</h3>
+              <ul>
+                <li>Versioned Manifest 与机器依赖检查</li>
+                <li>冻结运行范围与确定性 frontier</li>
+                <li>持久 Ledger 和 allowed-actions 状态机</li>
+                <li>Git / Session identity gates</li>
+                <li>timeout、retry、cost、abort、reopen、clean</li>
+              </ul>
+            </div>
+            <div>
+              <h3>引入 implement-spec 的部分</h3>
+              <ul>
+                <li>Run 使用专用 PR branch/worktree</li>
+                <li>frontier Ticket 使用独立 worktree/branch</li>
+                <li>默认并发 2–3，而不是“最大并发”</li>
+                <li>持久化的串行 merge queue</li>
+                <li>PR 级集成测试、review、fix、复审</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+        <h3>建议的最小增强顺序</h3>
+        <ol>
+          <li>先给 <code>implement-spec</code> 增加持久 run ledger，记录 Ticket、Agent、worktree、branch、base SHA 和 merge commit。</li>
+          <li>把“maximum concurrency”改成有上限的 frontier 并发；一般仓库默认 2–3。</li>
+          <li>所有 merge 串行化，并在每次 merge 后运行相关集成测试。</li>
+          <li>定义冲突、超时、Agent 退出和主 Session 中断后的可恢复状态。</li>
+          <li>review 修复后必须复审；只有零阻塞 findings 才能将 PR 标记 ready。</li>
+          <li>最后再考虑让 Ticket Loop 支持可选 PR 模式，而不是先破坏其简单、可靠的串行内核。</li>
+        </ol>
+      </section>
+
+      <section id="evidence">
+        <div class="section-head"><span class="section-no">08</span><h2>证据范围与判断边界</h2></div>
+        <details open>
+          <summary>本次比较了哪些实现</summary>
+          <div>
+            <p>完整阅读了 <code>plugins/felix-skills/skills/ticket-loop/SKILL.md</code>、<code>scripts/supervise.py</code>、<code>scripts/ticket_loop.py</code>、<code>tests/test_ticket_loop.py</code>、<code>.scratch/ticket-loop/spec.md</code> 与 issue tracker 约定；并对照用户提供的完整 <code>implement-spec</code> Skill。</p>
+          </div>
+        </details>
+        <details>
+          <summary>一个容易混淆的事实</summary>
+          <div><code>ticket-loop</code> 每票实际调用的是 <code>/implement @ticket</code>，不是 <code>/implement-spec</code>。因此对比对象是“Ticket Loop + 单票 implement”与“整体式 implement-spec 编排”。实现命令解析见 <code>ticket_loop.py:844-889</code>，首条 Prompt 见 <code>ticket_loop.py:793-816</code>。</div>
+        </details>
+        <details>
+          <summary>为什么不做伪精确评分</summary>
+          <div>这两种方案优化目标不同，用一个总分会把可靠性、吞吐量、远程副作用和成本偏好错误压成单一数字。本报告改用可验证的能力矩阵和场景决策。</div>
+        </details>
+        <details>
+          <summary>测试可信度的边界</summary>
+          <div>Ticket Loop 的测试大量使用真实临时 Git 仓库和 fake Claude executable，能证明状态机、进程、锁和 Git 协议，但不能证明真实模型一定产出高质量代码。implement-spec 没有配套 Runner 或行为测试，其可靠性主要依赖执行时模型与 Claude Code 原生工具。</div>
+        </details>
+        <p class="ref">关键路径：<code>ticket_loop.py:30-73, 104-355, 369-698, 701-968, 977-1498, 1540-1734</code> · <code>supervise.py:90-131</code> · <code>test_ticket_loop.py:44-1773</code> · <code>.scratch/ticket-loop/spec.md:120-208</code>。</p>
+      </section>
+    </article>
+  </div>
+
+  <footer class="footer">
+    <span>基于 felix-plugins 当前实现与用户提供的 implement-spec 定义</span>
+    <span>分析日期：2026-09-17</span>
+  </footer>
+</div>

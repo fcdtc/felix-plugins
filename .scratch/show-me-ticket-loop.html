@@ -232,6 +232,7 @@ details > div { padding: 0 0 18px 20px; color: var(--muted); }
       <a href="#control-flow">运行机制</a>
       <a href="#state-machine">状态机</a>
       <a href="#gates">完成门禁</a>
+      <a href="#completion-signal">完成判定与通知</a>
       <a href="#persistence">持久化与恢复</a>
       <a href="#operations">运维命令</a>
       <a href="#claude-session">Claude Session 与无人值守</a>
@@ -473,8 +474,82 @@ details > div { padding: 0 0 18px 20px; color: var(--muted); }
         <p class="ref">Implementation gates：ticket_loop.py:1214-1223 · Closeout gates：ticket_loop.py:1226-1300</p>
       </section>
 
+      <section id="completion-signal">
+        <div class="rule-title"><span class="num">06</span><h2>上一张 Ticket 如何完成，谁来通知下一步</h2></div>
+        <p class="lead">没有 Claude 发出的“Ticket 已完成”事件。Runner 同步等待 Claude CLI 退出，随后用 Git 与 Ticket 内容执行硬门禁；只有全部通过，才把当前 ID 写入 Ledger 的 <code>completed_tickets</code>，并激活下一张满足依赖的 Ticket。</p>
+
+        <figure class="figure">
+          <div class="fig-label">完成判定与推进链路</div>
+          <svg viewBox="0 0 920 320" role="img" aria-label="Claude 退出后由 Runner 校验完成门禁、更新 Ledger 并由 Supervisor继续下一张 Ticket">
+            <defs><marker id="arrow4" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="currentColor"></path></marker></defs>
+            <rect class="flow-node" x="18" y="100" width="145" height="76" rx="4"></rect>
+            <text class="flow-text" x="90" y="130" text-anchor="middle">Claude CLI</text>
+            <text class="flow-small" x="90" y="153" text-anchor="middle">进程退出 + JSON</text>
+            <rect class="flow-node active" x="216" y="76" width="175" height="124" rx="4"></rect>
+            <text class="flow-text" x="303" y="108" text-anchor="middle">Runner</text>
+            <text class="flow-small" x="303" y="132" text-anchor="middle">runtime_git_gate</text>
+            <text class="flow-small" x="303" y="151" text-anchor="middle">completion_gate</text>
+            <text class="flow-small" x="303" y="170" text-anchor="middle">全部通过才推进</text>
+            <rect class="flow-node active" x="446" y="46" width="180" height="82" rx="4"></rect>
+            <text class="flow-text" x="536" y="78" text-anchor="middle">Ledger</text>
+            <text class="flow-small" x="536" y="102" text-anchor="middle">completed_tickets += 当前票</text>
+            <rect class="flow-node" x="446" y="174" width="180" height="82" rx="4"></rect>
+            <text class="flow-text" x="536" y="206" text-anchor="middle">下一张 Frontier</text>
+            <text class="flow-small" x="536" y="230" text-anchor="middle">最小编号 + blockers 满足</text>
+            <rect class="flow-node" x="694" y="100" width="190" height="76" rx="4"></rect>
+            <text class="flow-text" x="789" y="130" text-anchor="middle">Supervisor</text>
+            <text class="flow-small" x="789" y="153" text-anchor="middle">读取 JSON 并立即 step</text>
+            <path class="flow-line accent" d="M163 138 H216"></path>
+            <text class="flow-small" x="189" y="125" text-anchor="middle">同步返回</text>
+            <path class="flow-line accent" d="M391 115 C420 115 417 87 446 87"></path>
+            <text class="flow-small" x="419" y="75" text-anchor="middle">通过</text>
+            <path class="flow-line accent" d="M536 128 V174"></path>
+            <text class="flow-small" x="548" y="154">解锁</text>
+            <path class="flow-line accent" d="M626 215 C664 215 659 154 694 148"></path>
+            <text class="flow-small" x="661" y="201" text-anchor="middle">公开状态</text>
+            <path class="flow-line dashed" d="M694 118 C650 35 398 18 329 76"></path>
+            <text class="flow-small" x="526" y="22" text-anchor="middle">下一轮同步调用 step / resume</text>
+            <text class="flow-small" x="456" y="296" text-anchor="middle">失败路径：记录 gate_failure → recovery → allowed_actions 切换为 resume，不解锁下一票</text>
+          </svg>
+          <figcaption>“通知”发生在同步函数返回值里，而不是异步消息系统中。Claude 的文字结论不参与依赖解锁；依赖解锁只认 Runner 通过门禁后写入的 <code>completed_tickets</code>。</figcaption>
+        </figure>
+
+        <h3>完整判定顺序</h3>
+        <div class="steps">
+          <div class="step"><div class="step-no">01</div><div><h3>等待 Claude 进程退出</h3><p>Runner 使用 <code>process.communicate(timeout=...)</code> 同步等待 stdout、stderr 与退出码；不是 webhook、回调或轮询模型状态。</p></div></div>
+          <div class="step"><div class="step-no">02</div><div><h3>重新检查运行现场</h3><p>验证 Run Lock、仓库、分支、Git 操作状态、历史祖先关系，并确认外部 blocker 在运行期间没有变化。</p></div></div>
+          <div class="step"><div class="step-no">03</div><div><h3>执行 Completion Gate</h3><p>检查工作区干净、Closeout 提交范围与名称、合法 <code>done (日期, commit)</code>、Checklist 全勾选，以及唯一且完整的 Completion evidence。</p></div></div>
+          <div class="step"><div class="step-no">04</div><div><h3>写入完成事实</h3><p>门禁通过后才执行 <code>completed_tickets.append(active_ticket)</code>。同一 Run 内的后继依赖读取这个集合，不是只看上一张 Ticket 的 <code>Status</code>。</p></div></div>
+          <div class="step"><div class="step-no">05</div><div><h3>激活后继 Ticket</h3><p>选择 Manifest 中编号最小、状态为 ready-for-agent 且所有 blockers 已满足的 Ticket，为它创建新 Session；若无剩余工单则 Run 进入 completed。</p></div></div>
+        </div>
+
+        <h3>当前通知能力</h3>
+        <div class="matrix-wrap">
+          <table>
+            <thead><tr><th>链路</th><th>当前机制</th><th>是否异步推送</th></tr></thead>
+            <tbody>
+              <tr><td>Claude → Runner</td><td>Claude CLI 子进程退出，stdout 返回 JSON</td><td><span class="badge stop">否</span> 同步等待</td></tr>
+              <tr><td>Runner → Supervisor</td><td><code>step/resume</code> 返回公开 JSON，包含 state、active_ticket、allowed_actions</td><td><span class="badge stop">否</span> 同步调用</td></tr>
+              <tr><td>Runner → 磁盘</td><td>原子更新 <code>.ticket-loop/runs/&lt;run-id&gt;.json</code></td><td><span class="badge manual">可读取</span> 无监听器</td></tr>
+              <tr><td>单张 Ticket → 用户</td><td>只更新 Ledger 并立即开始下一票</td><td><span class="badge stop">无通知</span></td></tr>
+              <tr><td>整个 Run → 用户</td><td>Supervisor 到 completed / failure / interrupted / aborted 后退出并输出最终 JSON</td><td><span class="badge manual">命令结果</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="callout warning">
+          <strong>当前没有逐票通知或等待确认</strong>
+          <p>不存在桌面通知、手机推送、Webhook、Slack/飞书消息、EventEmitter、完成 Hook 或后台 daemon。Ticket 01 完成后，Supervisor 会直接执行 Ticket 02，不会暂停等待用户确认。</p>
+        </div>
+        <div class="callout">
+          <strong>如果要扩展通知</strong>
+          <p>合适的扩展点是 <code>advance_after_closeout()</code>：在完成事实写入 Ledger 后生成结构化 <code>ticket_completed</code> 事件，携带 run ID、ticket ID、implementation HEAD 与 next ticket，再由用户显式配置的可选 Hook 发送到桌面或 Webhook。默认应保持无外部副作用。</p>
+        </div>
+        <p class="ref">同步等待：ticket_loop.py:1119-1146 · 完成门禁：ticket_loop.py:1226-1300 · 完成与调度：ticket_loop.py:819-841,1422-1434 · 公开 JSON：ticket_loop.py:701-723 · Supervisor 循环：supervise.py:106-131</p>
+      </section>
+
       <section id="persistence">
-        <div class="rule-title"><span class="num">06</span><h2>持久化、锁与崩溃恢复</h2></div>
+        <div class="rule-title"><span class="num">07</span><h2>持久化、锁与崩溃恢复</h2></div>
         <h3>运行数据放在哪里</h3>
         <pre><code>.ticket-loop/
 ├── runs/&lt;run-id&gt;.json                 # Ledger：状态、HEAD、尝试、成本、恢复快照
@@ -528,7 +603,7 @@ details > div { padding: 0 0 18px 20px; color: var(--muted); }
       </section>
 
       <section id="operations">
-        <div class="rule-title"><span class="num">07</span><h2>观察、停止、重开与清理</h2></div>
+        <div class="rule-title"><span class="num">08</span><h2>观察、停止、重开与清理</h2></div>
         <p>需要细粒度控制时，可绕过 Supervisor 直接使用 Runner。以下命令中的路径以已安装 Skill 目录为例。</p>
         <pre><code>RUNNER="${CLAUDE_SKILL_DIR}/scripts/ticket_loop.py"
 
@@ -565,7 +640,7 @@ python3 "$RUNNER" clean  --run &lt;run-id&gt;</code></pre>
       </section>
 
       <section id="claude-session">
-        <div class="rule-title"><span class="num">08</span><h2>Claude Session 与无人值守执行</h2></div>
+        <div class="rule-title"><span class="num">09</span><h2>Claude Session 与无人值守执行</h2></div>
         <p class="lead">是的，Ticket Loop 使用 Claude Code CLI 的 print 模式发起 Session：源码写的是长参数 <code>claude --print</code>，等价于常说的 <code>claude -p</code>。它不是交互式 TUI，而是执行一次 prompt，等待 JSON 结果后退出。</p>
 
         <h3>首次 Implementation：创建 Session</h3>
@@ -641,7 +716,7 @@ python3 "$RUNNER" clean  --run &lt;run-id&gt;</code></pre>
       </section>
 
       <section id="security">
-        <div class="rule-title"><span class="num">09</span><h2>安全边界</h2></div>
+        <div class="rule-title"><span class="num">10</span><h2>安全边界</h2></div>
         <div class="callout danger">
           <strong>这是高权限无人值守执行，不是沙箱</strong>
           <p>任务 Session 以 <code>bypassPermissions</code> 与 <code>--dangerously-skip-permissions</code> 运行。Git 门禁只能验证仓库结果，不能阻止恶意命令、凭据读取或仓库外副作用。</p>
@@ -660,7 +735,7 @@ python3 "$RUNNER" clean  --run &lt;run-id&gt;</code></pre>
       </section>
 
       <section id="limits">
-        <div class="rule-title"><span class="num">10</span><h2>限制、边界条件与易错点</h2></div>
+        <div class="rule-title"><span class="num">11</span><h2>限制、边界条件与易错点</h2></div>
         <details open>
           <summary>平台：当前实现面向 POSIX</summary>
           <div>代码直接依赖 <code>fcntl.flock</code>，适用于 macOS/Linux；Windows Python 不能按当前实现直接运行。</div>
@@ -696,7 +771,7 @@ python3 "$RUNNER" clean  --run &lt;run-id&gt;</code></pre>
       </section>
 
       <section id="files">
-        <div class="rule-title"><span class="num">11</span><h2>关键文件索引</h2></div>
+        <div class="rule-title"><span class="num">12</span><h2>关键文件索引</h2></div>
         <div class="matrix-wrap">
           <table>
             <thead><tr><th>文件</th><th>职责</th></tr></thead>
@@ -724,6 +799,6 @@ python3 "$RUNNER" clean  --run &lt;run-id&gt;</code></pre>
 
   <footer class="footer">
     <span>基于 felix-plugins 当前 main 分支只读代码审阅</span>
-    <span>报告生成于 2026-09-15</span>
+    <span>报告更新于 2026-09-16</span>
   </footer>
 </div>
