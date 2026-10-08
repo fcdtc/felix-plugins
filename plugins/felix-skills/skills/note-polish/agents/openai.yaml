@@ -1,0 +1,5 @@
+interface:
+  display_name: "Note Polish"
+  short_description: "Normalize notes and refresh vault links"
+policy:
+  allow_implicit_invocation: false

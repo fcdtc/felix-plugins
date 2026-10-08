@@ -9,7 +9,7 @@ disable-model-invocation: true
 
 铁律：**本 skill 全程只读，只输出报告，绝不修改、移动、重命名任何笔记文件。** 修不修、怎么修，一律由用户决定——这是「LLM 管结构建议，人管内容」原则在体检上的形态。
 
-规范来源：[`note/vault-conventions.md`](../note/vault-conventions.md)（标准形状、矛盾标注格式）。
+规范来源：[`note/vault-conventions.md`](../note/vault-conventions.md)（标准形状、矛盾标注格式）。先从当前 skill 目录解析 sibling `note` 目录为绝对路径 `<NOTE_SKILL_DIR>` 并确认脚本存在；缺失时提示用户同时安装 `note`，不要猜测 agent 的用户目录。
 
 ## Usage
 
@@ -23,7 +23,7 @@ disable-model-invocation: true
 ### 1. 结构层（必跑，脚本零成本）
 
 ```bash
-bash ~/.claude/skills/note/scripts/lint.sh [vault]
+bash "<NOTE_SKILL_DIR>/scripts/lint.sh" [vault]
 ```
 
 报告七项：frontmatter 缺字段 / 重名冲突 / 死链 / 孤立笔记 / 索引新鲜度 / 多块缺目录 / 矛盾标注现状（信息项）。

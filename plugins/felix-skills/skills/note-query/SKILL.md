@@ -36,7 +36,7 @@ disable-model-invocation: true
 
 ## 规范来源
 
-笔记的标准形状、frontmatter 字段、双链结构、`## 相关笔记` 区块格式——见 [`note/vault-conventions.md`](../note/vault-conventions.md)。note-query 只读不写；需要重建索引时调用 note skill 的脚本（见下文「索引保鲜」）。
+笔记的标准形状、frontmatter 字段、双链结构、`## 相关笔记` 区块格式——见 [`note/vault-conventions.md`](../note/vault-conventions.md)。先从当前 skill 目录解析 sibling `note` 目录为绝对路径 `<NOTE_SKILL_DIR>` 并确认脚本存在；缺失时提示用户同时安装 `note`，不要猜测 agent 的用户目录。note-query 只读不写；需要重建索引时引用 note skill 的脚本（见下文「索引保鲜」）。
 
 ## Behavior
 
@@ -135,7 +135,7 @@ INDEX.md 含五个区，各有用途：
 INDEX.md 由 `note/scripts/build-index.sh` 自动生成。**正常查询不用动它**。仅当怀疑索引过时（比如刚 `/note` 沉淀了新笔记却查不到）时，提示用户重建：
 
 ```bash
-bash ~/.claude/skills/note/scripts/update-wiki.sh
+bash "<NOTE_SKILL_DIR>/scripts/update-wiki.sh"
 ```
 
 重建是写操作，归 note skill 管；note-query 只读，不主动跑。

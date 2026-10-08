@@ -27,7 +27,7 @@ disable-model-invocation: true
 
 ## 规范来源
 
-标准笔记形状、frontmatter 四字段、标签生成、文件名规则、标题层级、目录（多问题块）、相关笔记搜索 —— 全部见 [`~/.claude/skills/note/vault-conventions.md`](../../skills/note/vault-conventions.md)。改规则只改那一处，本 skill 与 `note` 同步生效。本 skill 只描述「规整」这一条流程上的特殊判定。
+标准笔记形状、frontmatter 四字段、标签生成、文件名规则、标题层级、目录（多问题块）、相关笔记搜索 —— 全部见 [`note/vault-conventions.md`](../note/vault-conventions.md)。先从当前 skill 目录解析 sibling `note` 目录为绝对路径 `<NOTE_SKILL_DIR>` 并确认脚本存在；缺失时提示用户同时安装 `note`，不要猜测 agent 的用户目录。改规则只改那一处，本 skill 与 `note` 同步生效。本 skill 只描述「规整」这一条流程上的特殊判定。
 
 ## Behavior
 
@@ -81,7 +81,7 @@ disable-model-invocation: true
 3. **刷新图谱** — 全部规整后跑一次（让重命名/新关联生效）：
 
    ```bash
-   bash ~/.claude/skills/note/scripts/update-wiki.sh
+   bash "<NOTE_SKILL_DIR>/scripts/update-wiki.sh"
    ```
 
    详见 conventions 的「图谱刷新」一节。

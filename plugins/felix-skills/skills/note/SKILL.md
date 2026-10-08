@@ -7,7 +7,9 @@ disable-model-invocation: true
 
 # Note Skill — 沉淀为知识笔记
 
-把当前 Claude Code 会话的输出**沉淀**为一篇 vault 知识笔记，写完即连入知识图谱。
+把当前 agent 会话的输出**沉淀**为一篇 vault 知识笔记，写完即连入知识图谱。
+
+执行 bundled scripts 前，先根据当前已加载的 `SKILL.md` 所在目录确定 `NOTE_SKILL_DIR`，并解析为绝对路径。`NOTE_SKILL_DIR` 是下文的说明性占位符，不是假定存在的环境变量。脚本不存在时停止并提示重新安装 `note` skill，不猜测 Claude Code、Codex 或其他 agent 的用户目录。
 
 ## Usage
 
@@ -25,7 +27,7 @@ disable-model-invocation: true
 ## Behavior
 
 1. **解析参数** — 取 `--dir` 决定目标目录；不存在则 `Bash mkdir -p` 创建。
-2. **选定范围** — 默认**只沉淀最近一次 Claude Code 输出**（会话末尾最新一条助手输出）。用户明确指明范围（「总结整个会话」「总结前面关于 X 的讨论」「从第 N 条起」）时才按该范围。
+2. **选定范围** — 默认**只沉淀当前 agent 会话最近一次助手输出**。用户明确指明范围（「总结整个会话」「总结前面关于 X 的讨论」「从第 N 条起」）时才按该范围。
 3. **提炼标题** — 从输出提取最核心主题。中文优先（匹配 vault 风格），英文专有名词保留原文（`HNSW`、`PostgreSQL`）。
 4. **生成 description** — 按 conventions 的「description 生成」写一句内容摘要（≤80 字，写结论/核心问题，给 LLM 全库目录定位用）。
 5. **生成标签** — 按 `vault-conventions` 的标签规则生成 3-7 个。
@@ -42,13 +44,13 @@ disable-model-invocation: true
 8. **搜相关笔记（多信号评分）** — 跑 `vault-conventions` 的评分脚本：
 
    ```bash
-   bash ~/.claude/skills/note/scripts/find-related.sh \
+   bash "<NOTE_SKILL_DIR>/scripts/find-related.sh" \
      --tags "{tag1,tag2}" --keywords "{步骤 7 的概念}"
    ```
 
    取评分榜 top（默认 5）造 `[[标题]]`；明显不相关的低分候选剔除。无匹配则 `## 相关笔记` 留空节。
 9. **碰撞检测** — `Read`/`Bash ls` 查目标路径：
-   - 已存在 → `AskUserQuestion` 问：追加 / 覆盖 / 换标题 / 取消
+   - 已存在 → 使用当前环境的交互询问能力问：追加 / 覆盖 / 换标题 / 取消；若没有专用询问工具，则在回复中列出选项并等待用户选择
    - 不存在 → 步骤 10A
    - 选「追加」→ 步骤 10B
 
@@ -91,7 +93,7 @@ disable-model-invocation: true
    5. **追加相关笔记** — 按步骤 8 再搜一次（追加场景传 `--note {相对路径}` 启用共同邻居信号），新发现的相关笔记追加进 `## 相关笔记`（与已有去重）。
    6. 一次 `Write` 写回完整文件。
 
-11. **矛盾标注（条件触发）** — 仅当步骤 7 标记了「矛盾嫌疑」且嫌疑对象在库里：`AskUserQuestion` 呈报冲突双方与拟写文案；用户确认后，在**两篇**笔记的 `## 相关笔记` 各追加一行（格式见 conventions「矛盾标注」）：
+11. **矛盾标注（条件触发）** — 仅当步骤 7 标记了「矛盾嫌疑」且嫌疑对象在库里：使用当前环境的交互询问能力呈报冲突双方与拟写文案；用户确认后，在**两篇**笔记的 `## 相关笔记` 各追加一行（格式见 conventions「矛盾标注」）：
 
     ```markdown
     - [[对方标题]] — ⚠️ 结论冲突：{本文认为 X，该文认为 Y，以何者为准待定}
@@ -102,7 +104,7 @@ disable-model-invocation: true
 12. **刷新图谱** — 笔记落盘后立刻跑（新笔记才不会是孤岛）：
 
    ```bash
-   bash ~/.claude/skills/note/scripts/update-wiki.sh
+   bash "<NOTE_SKILL_DIR>/scripts/update-wiki.sh"
    ```
 
    详见 `vault-conventions` 的「图谱刷新」一节。

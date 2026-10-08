@@ -1,0 +1,5 @@
+interface:
+  display_name: "HTML PPT Studio"
+  short_description: "Create polished HTML slide decks"
+policy:
+  allow_implicit_invocation: false

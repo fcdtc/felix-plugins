@@ -1,0 +1,5 @@
+interface:
+  display_name: "Deep Init"
+  short_description: "Generate layered codebase navigation files"
+policy:
+  allow_implicit_invocation: false

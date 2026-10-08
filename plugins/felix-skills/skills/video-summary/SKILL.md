@@ -6,7 +6,9 @@ disable-model-invocation: true
 
 # 视频字幕下载 + 中文总结（Bilibili / YouTube）
 
-统一处理两类视频：根据用户输入自动识别平台，走「字幕下载 → ASR 兜底 → 中文总结」两级流程。
+统一处理两类视频：根据用户输入自动识别平台，走「字幕下载 → ASR 兜底 → 中文总结」两级流程。本 skill 可由 Claude Code 与 Codex 执行，但 ASR 兜底依赖 macOS、Apple Silicon、Python 3、ffmpeg、yt-dlp、网络访问和足够磁盘空间。
+
+执行前先从当前已加载的 `SKILL.md` 所在目录解析绝对路径 `<SKILL_DIR>`；该名称是下文的说明性占位符，不是假定存在的环境变量。下载媒体、安装依赖或预热模型前，先检查上述运行条件；不满足时停止并给出准备步骤，不直接修改系统环境。
 
 ## 第零步：平台识别（路由）
 
@@ -25,7 +27,7 @@ ASR 兜底依赖 mlx-whisper（en 用 turbo 模型，zh 用 large-v3，约 2.9G�
 python3 <SKILL_DIR>/scripts/setup_whisper.py [en|zh|all]   # 默认 all
 ```
 
-之后所有平台脚本的 ASR 兜底会直接复用本地模型，转写很快。**长时间运行**：模型下载/转写可能超过单条命令超时，建议 `nohup ... &` 后台运行，再轮询 `RESULT_JSON` 是否产出。
+之后所有平台脚本的 ASR 兜底会直接复用本地模型，转写很快。**长时间运行**：模型下载/转写可能超过单条命令超时，使用当前 agent 环境提供的后台任务与状态监控能力，并同时监控成功和失败终态；不要假设 `nohup` 是唯一实现。
 
 ## 总体流程（两级降级）
 
@@ -54,7 +56,7 @@ python3 <SKILL_DIR>/scripts/setup_whisper.py [en|zh|all]   # 默认 all
 
 ## 总结稿生成流程（两边统一）
 
-1. 从 `RESULT_JSON` 取 `chunks` 列表，用子智能体逐块总结，再合并去重。
+1. 从 `RESULT_JSON` 取 `chunks` 列表，优先使用当前平台可用的 subagent/并行任务能力逐块总结，再合并去重；平台不支持委派时顺序处理。
 2. 把最终总结**写入** `deliverables.summary` 指向的 `总结稿.md`（覆盖占位内容），保留一级标题 `# <视频标题> —— 内容总结`。
 3. **总结稿必须是中文**——逐字稿可以是英文，总结稿不行。
 4. 交付时向用户明确告知两份文件路径，以 `总结稿.md` 为主要交付物。

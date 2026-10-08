@@ -1,0 +1,5 @@
+interface:
+  display_name: "ADHD Mode"
+  short_description: "Keep responses focused and easy to scan"
+policy:
+  allow_implicit_invocation: false

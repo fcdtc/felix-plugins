@@ -10,6 +10,8 @@ allowed-tools:
 
 # Ticket Loop
 
+> **Claude Code only.** 本 skill 依赖 Claude Code plugin discovery、Claude CLI Task Session/`--resume`、无人值守权限模式和 Claude JSON 成本字段；Codex 安装时不要选择它。
+
 Run the bundled supervisor once with the user's arguments:
 
 ```bash

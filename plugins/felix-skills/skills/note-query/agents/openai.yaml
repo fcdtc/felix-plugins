@@ -1,0 +1,5 @@
+interface:
+  display_name: "Note Query"
+  short_description: "Find and answer from linked vault notes"
+policy:
+  allow_implicit_invocation: false

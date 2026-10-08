@@ -1,0 +1,5 @@
+interface:
+  display_name: "Codebase Tutor"
+  short_description: "Build an interactive codebase learning guide"
+policy:
+  allow_implicit_invocation: false

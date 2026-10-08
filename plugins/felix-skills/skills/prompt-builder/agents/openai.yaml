@@ -1,0 +1,5 @@
+interface:
+  display_name: "Prompt Builder"
+  short_description: "Turn requirements into a structured prompt"
+policy:
+  allow_implicit_invocation: false

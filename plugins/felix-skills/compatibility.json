@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "skills": {
+    "adhd": {"support": "claude-and-codex"},
+    "codebase-query": {"support": "claude-and-codex"},
+    "codebase-tutor": {"support": "claude-and-codex"},
+    "deepinit": {"support": "claude-and-codex"},
+    "go-service-structure": {"support": "claude-and-codex"},
+    "html-ppt": {"support": "claude-and-codex"},
+    "note": {"support": "claude-and-codex"},
+    "note-lint": {"support": "claude-and-codex", "requires": ["note"]},
+    "note-polish": {"support": "claude-and-codex", "requires": ["note"]},
+    "note-query": {"support": "claude-and-codex", "requires": ["note"]},
+    "prompt-builder": {"support": "claude-and-codex"},
+    "ticket-loop": {
+      "support": "claude-only",
+      "limitations": [
+        "Claude Code plugin discovery",
+        "Claude CLI Task Sessions and resume",
+        "Claude Code unattended permission mode",
+        "Claude CLI JSON cost reporting"
+      ]
+    },
+    "video-summary": {
+      "support": "claude-and-codex",
+      "environment_requirements": [
+        "macOS on Apple Silicon for mlx-whisper fallback",
+        "Python 3",
+        "ffmpeg and yt-dlp",
+        "network access for subtitles, media, and models"
+      ]
+    }
+  }
+}

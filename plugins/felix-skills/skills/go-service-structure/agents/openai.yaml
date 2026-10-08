@@ -1,0 +1,5 @@
+interface:
+  display_name: "Go Service Structure"
+  short_description: "Review and improve Go service structure"
+policy:
+  allow_implicit_invocation: false

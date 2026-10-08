@@ -1,0 +1,5 @@
+interface:
+  display_name: "Video Summary"
+  short_description: "Create transcripts and Chinese video summaries"
+policy:
+  allow_implicit_invocation: false

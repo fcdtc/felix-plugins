@@ -1,0 +1,5 @@
+interface:
+  display_name: "Codebase Query"
+  short_description: "Answer questions by tracing repository code"
+policy:
+  allow_implicit_invocation: false

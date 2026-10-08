@@ -1,0 +1,5 @@
+interface:
+  display_name: "Note Lint"
+  short_description: "Audit a knowledge vault without modifying it"
+policy:
+  allow_implicit_invocation: false

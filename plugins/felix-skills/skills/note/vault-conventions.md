@@ -2,6 +2,8 @@
 
 本文件是 `note`、`note-polish`、`note-query`、`note-lint` 共享的规范定义。`note`/`note-polish` 写笔记时遵循，`note-query` 只读时据此识别笔记结构，`note-lint` 据此做体检。任何格式规则的改动只改这里一处，四个 skill 同步生效。
 
+下文的 `<NOTE_SKILL_DIR>` 指当前已安装 `note` skill 的绝对目录。调用方必须从当前 skill 位置解析 sibling `note` 目录并确认脚本存在；它不是环境变量，也不能替换成某个 agent 的固定用户目录。
+
 ## Vault 位置
 
 根目录：`~/basic-memory/`
@@ -116,7 +118,7 @@ tags:
 评分由脚本完成（LLM 只负责喂参数、剔误报、写关联说明）：
 
 ```bash
-bash ~/.claude/skills/note/scripts/find-related.sh \
+bash "<NOTE_SKILL_DIR>/scripts/find-related.sh" \
   --tags "tag1,tag2" --keywords "词1,词2" [--note 相对路径] [--top N]
 ```
 
@@ -147,7 +149,7 @@ bash ~/.claude/skills/note/scripts/find-related.sh \
 笔记写入/规整/重命名后，必须刷新索引层，否则新笔记是孤岛。脚本位于 **note skill 目录下**（非 vault 库内），默认操作 vault 根 `~/basic-memory`，无需 `cd`：
 
 ```bash
-bash ~/.claude/skills/note/scripts/update-wiki.sh
+bash "<NOTE_SKILL_DIR>/scripts/update-wiki.sh"
 ```
 
 脚本清单（任一 skill 均可调用，首个可选参数为 vault 根目录）：

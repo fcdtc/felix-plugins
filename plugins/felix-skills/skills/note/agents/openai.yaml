@@ -1,0 +1,5 @@
+interface:
+  display_name: "Note"
+  short_description: "Save conversation knowledge into a linked vault"
+policy:
+  allow_implicit_invocation: false
