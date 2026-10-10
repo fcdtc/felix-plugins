@@ -166,7 +166,7 @@ def validate() -> list[str]:
             elif dependency not in actual_names:
                 errors.append(f"unknown skill dependency for {name}: {dependency}")
         expected_dependencies = ["note"] if name in {
-            "note-lint", "note-polish", "note-query"
+            "note-import", "note-lint", "note-polish", "note-query"
         } else []
         if dependencies != expected_dependencies:
             errors.append(

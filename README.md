@@ -15,6 +15,7 @@ felix 的个人 Agent Skills 仓库，同时支持 Claude Code 与 Codex。技�
 | `go-service-structure` | ✓ | ✓ | |
 | `html-ppt` | ✓ | ✓ | 部分导出能力需要本机 Chrome |
 | `note` | ✓ | ✓ | 使用 `~/basic-memory/` |
+| `note-import` | ✓ | ✓ | 同时安装 `note` |
 | `note-lint` | ✓ | ✓ | 同时安装 `note` |
 | `note-polish` | ✓ | ✓ | 同时安装 `note` |
 | `note-query` | ✓ | ✓ | 同时安装 `note` |
@@ -37,10 +38,10 @@ felix 的个人 Agent Skills 仓库，同时支持 Claude Code 与 Codex。技�
 
 ## Codex 安装
 
-`skills` CLI 能从本仓库的嵌套目录发现全部 13 个 skill。因为 `ticket-loop` 是 Claude Code only，Codex 安装时必须明确选择下面 12 个兼容 skill，不能使用 `--skill '*'`。
+`skills` CLI 能从本仓库的嵌套目录发现全部 14 个 skill。因为 `ticket-loop` 是 Claude Code only，Codex 安装时必须明确选择下面 13 个兼容 skill，不能使用 `--skill '*'`。
 
 ```bash
-CODEX_SKILLS="adhd codebase-query codebase-tutor deepinit go-service-structure html-ppt note note-lint note-polish note-query prompt-builder video-summary"
+CODEX_SKILLS="adhd codebase-query codebase-tutor deepinit go-service-structure html-ppt note note-import note-lint note-polish note-query prompt-builder video-summary"
 ```
 
 ### 项目级
@@ -63,7 +64,7 @@ npx skills@latest add fcdtc/felix-plugins \
   --global --agent codex --skill $CODEX_SKILLS
 ```
 
-需要非交互安装时可额外传 `--yes`。`note-lint`、`note-polish`、`note-query` 依赖 sibling `note` 目录，因此不要单独安装这些 consumer。
+需要非交互安装时可额外传 `--yes`。`note-import`、`note-lint`、`note-polish`、`note-query` 依赖 sibling `note` 目录，因此不要单独安装这些 consumer。
 
 ## 仓库结构
 

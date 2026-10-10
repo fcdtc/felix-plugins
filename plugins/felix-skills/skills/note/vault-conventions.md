@@ -1,6 +1,6 @@
 # Vault Conventions — 笔记规范（单一事实源）
 
-本文件是 `note`、`note-polish`、`note-query`、`note-lint` 共享的规范定义。`note`/`note-polish` 写笔记时遵循，`note-query` 只读时据此识别笔记结构，`note-lint` 据此做体检。任何格式规则的改动只改这里一处，四个 skill 同步生效。
+本文件是 `note`、`note-import`、`note-polish`、`note-query`、`note-lint` 共享的规范定义。`note`/`note-import`/`note-polish` 写笔记时遵循，`note-query` 只读时据此识别笔记结构，`note-lint` 据此做体检。任何格式规则的改动只改这里一处，五个 skill 同步生效。
 
 下文的 `<NOTE_SKILL_DIR>` 指当前已安装 `note` skill 的绝对目录。调用方必须从当前 skill 位置解析 sibling `note` 目录并确认脚本存在；它不是环境变量，也不能替换成某个 agent 的固定用户目录。
 

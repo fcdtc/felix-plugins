@@ -1,0 +1,5 @@
+interface:
+  display_name: "Note Import"
+  short_description: "Summarize files into a linked vault note"
+policy:
+  allow_implicit_invocation: false

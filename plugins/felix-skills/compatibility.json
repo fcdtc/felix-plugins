@@ -8,6 +8,7 @@
     "go-service-structure": {"support": "claude-and-codex"},
     "html-ppt": {"support": "claude-and-codex"},
     "note": {"support": "claude-and-codex"},
+    "note-import": {"support": "claude-and-codex", "requires": ["note"]},
     "note-lint": {"support": "claude-and-codex", "requires": ["note"]},
     "note-polish": {"support": "claude-and-codex", "requires": ["note"]},
     "note-query": {"support": "claude-and-codex", "requires": ["note"]},

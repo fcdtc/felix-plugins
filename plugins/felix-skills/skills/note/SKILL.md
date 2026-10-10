@@ -1,46 +1,49 @@
 ---
 name: note
 description: Summarize conversation into a knowledge note in basic-memory vault
-argument-hint: "[--dir 目录名]"
+argument-hint: "[--scope reply|session] [--dir 目录名]"
 disable-model-invocation: true
 ---
 
 # Note Skill — 沉淀为知识笔记
 
-把当前 agent 会话的输出**沉淀**为一篇 vault 知识笔记，写完即连入知识图谱。
+把当前 agent 会话的回复或多轮对话**沉淀**为一篇 vault 知识笔记，写完即连入知识图谱。
 
 执行 bundled scripts 前，先根据当前已加载的 `SKILL.md` 所在目录确定 `NOTE_SKILL_DIR`，并解析为绝对路径。`NOTE_SKILL_DIR` 是下文的说明性占位符，不是假定存在的环境变量。脚本不存在时停止并提示重新安装 `note` skill，不猜测 Claude Code、Codex 或其他 agent 的用户目录。
 
 ## Usage
 
 ```
-/note [--dir 目录名]
+/note [--scope reply|session] [--dir 目录名]
 ```
 
 | 命令 | 落点 |
 |------|------|
 | `/note` | `learning/` |
 | `/note --dir aiinfra` | `project/aiinfra/` |
+| `/note --scope reply` | 总结最近一条助手回复（默认） |
+| `/note --scope session` | 总结当前 session 的多轮对话为一篇笔记 |
+| `/note --scope session --dir aiinfra` | 总结当前 session 并写入 `project/aiinfra/` |
 
 格式规范（frontmatter、标签、文件名、相关笔记）见 [`vault-conventions.md`](vault-conventions.md) —— 改规则只改那一处。
 
 ## Behavior
 
-1. **解析参数** — 取 `--dir` 决定目标目录；不存在则 `Bash mkdir -p` 创建。
-2. **选定范围** — 默认**只沉淀当前 agent 会话最近一次助手输出**。用户明确指明范围（「总结整个会话」「总结前面关于 X 的讨论」「从第 N 条起」）时才按该范围。
-3. **提炼标题** — 从输出提取最核心主题。中文优先（匹配 vault 风格），英文专有名词保留原文（`HNSW`、`PostgreSQL`）。
+1. **解析参数** — `--scope` 只接受 `reply` 或 `session`，省略时为 `reply`；`--dir` 决定目标目录，不存在则 `Bash mkdir -p` 创建。参数缺值或 scope 无效时说明正确用法并停止。
+2. **选定范围** — `reply` 只沉淀最近一次助手输出；`session` 汇总当前对话中与主题相关的多轮用户和助手内容，作为一篇完整笔记。用户明确给出其他范围（如「总结前面关于 X 的讨论」「从第 N 条起」）时按明确范围处理。只纳入对话中实际出现的内容，不推断未讨论的过程或结论。
+3. **提炼标题** — 从选定范围提取最核心主题。中文优先（匹配 vault 风格），英文专有名词保留原文（`HNSW`、`PostgreSQL`）。
 4. **生成 description** — 按 conventions 的「description 生成」写一句内容摘要（≤80 字，写结论/核心问题，给 LLM 全库目录定位用）。
 5. **生成标签** — 按 `vault-conventions` 的标签规则生成 3-7 个。
 6. **定路径** — 文件名 = `{title}.md`（规则见 conventions）；目标绝对路径 `{vault}/{目标目录}/{文件名}`。
 7. **分析先行** — 写入前先产出一份简短结构化分析（只在后续步骤使用，不落盘）：
 
    ```
-   - 涉及概念：{本次输出最核心的 3-5 个概念，中英不限}
+   - 涉及概念：{选定范围最核心的 3-5 个概念，中英不限}
    - 可能相关：{凭概念推测的相关笔记方向，如「库里讲 2PC 的那篇」}
    - 矛盾嫌疑：{与已有笔记可能冲突的结论，无则写「无」}
    ```
 
-   分析驱动后续：概念 → 步骤 8 的 `--keywords`；矛盾嫌疑 → 步骤 11 的矛盾标注。正文仍由会话输出**原样沉淀**，分析不改写内容。
+   分析驱动后续：概念 → 步骤 8 的 `--keywords`；矛盾嫌疑 → 步骤 11 的矛盾标注。正文忠实综合选定范围；`reply` 模式保留最近输出的原意，`session` 模式去除重复往返并整合多轮形成的结论、依据和必要分歧。分析本身不落盘。
 8. **搜相关笔记（多信号评分）** — 跑 `vault-conventions` 的评分脚本：
 
    ```bash
