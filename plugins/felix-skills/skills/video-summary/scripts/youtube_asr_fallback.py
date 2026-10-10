@@ -37,7 +37,7 @@ def extract_video_id(arg):
 
 
 def ytdlp_base_args():
-    args = ['yt-dlp', '--no-update', '--remote-components', 'ejs:github']
+    args = [sys.executable, '-m', 'yt_dlp', '--no-update']
     browser = os.environ.get('YT_COOKIES_FROM_BROWSER')
     if browser:
         args += ['--cookies-from-browser', browser]

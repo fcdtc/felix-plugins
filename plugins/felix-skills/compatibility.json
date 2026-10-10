@@ -25,9 +25,8 @@
     "video-summary": {
       "support": "claude-and-codex",
       "environment_requirements": [
-        "macOS on Apple Silicon for mlx-whisper fallback",
-        "Python 3",
-        "ffmpeg and yt-dlp",
+        "Python 3 with a dedicated venv managed by the skill",
+        "ffmpeg and ffprobe for ASR fallback",
         "network access for subtitles, media, and models"
       ]
     }

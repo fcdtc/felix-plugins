@@ -38,12 +38,12 @@ def run(cmd, **kw):
     return subprocess.run(cmd, **kw)
 
 
-def ensure_cmd(cmd, install_cmd):
-    """确保某命令可用，否则安装。"""
-    if shutil.which(cmd):
-        return
-    print(f'[setup] 未找到 {cmd}，安装中...', flush=True)
-    run(install_cmd, check=True)
+def require_cmd(cmd):
+    """验证外部命令存在；Python 依赖由 launcher 管理。"""
+    path = shutil.which(cmd)
+    if not path:
+        raise RuntimeError(f'缺少外部命令 {cmd}，请先安装后重试')
+    return path
 
 
 def sanitize_filename(name):
@@ -59,33 +59,68 @@ def output_dir(base, title, video_id):
 
 
 def ensure_deps():
-    """依赖检查：yt-dlp / ffmpeg / ffprobe / mlx-whisper。"""
-    ensure_cmd('yt-dlp', ['pip3', 'install', '--break-system-packages', '-U', 'yt-dlp'])
-    ensure_cmd('ffmpeg', ['brew', 'install', 'ffmpeg'])
-    ensure_cmd('ffprobe', ['brew', 'install', 'ffmpeg'])
-    try:
-        import mlx_whisper  # noqa: F401
-    except ImportError:
-        run(['pip3', 'install', '--break-system-packages', 'mlx-whisper'], check=True)
+    """验证 launcher 已准备 Python 环境及 ASR 外部命令。"""
+    if not os.environ.get('VIDEO_SUMMARY_VENV'):
+        raise RuntimeError('请通过 scripts/launcher.py 启动 video-summary')
+    import mlx_whisper  # noqa: F401
+    import yt_dlp  # noqa: F401
+    require_cmd('ffmpeg')
+    require_cmd('ffprobe')
+    require_cmd('curl')
 
 
-def model_snapshot(model):
-    cache = os.path.expanduser(f'~/.cache/huggingface/hub/models--{model.replace("/", "--")}')
-    return os.path.join(cache, 'snapshots', 'main')
+def huggingface_hub_roots():
+    roots = []
+    if os.environ.get('HF_HUB_CACHE'):
+        roots.append(os.path.expanduser(os.environ['HF_HUB_CACHE']))
+    if os.environ.get('HF_HOME'):
+        roots.append(os.path.join(os.path.expanduser(os.environ['HF_HOME']), 'hub'))
+    xdg = os.environ.get('XDG_CACHE_HOME')
+    if xdg:
+        roots.append(os.path.join(os.path.expanduser(xdg), 'huggingface', 'hub'))
+    roots.append(os.path.expanduser('~/.cache/huggingface/hub'))
+    return list(dict.fromkeys(roots))
+
+
+def model_snapshots(model, root):
+    cache = os.path.join(root, f'models--{model.replace("/", "--")}')
+    candidates = []
+    ref = os.path.join(cache, 'refs', 'main')
+    if os.path.isfile(ref):
+        try:
+            revision = open(ref, encoding='utf-8').read().strip()
+        except OSError:
+            revision = ''
+        if revision:
+            candidates.append(os.path.join(cache, 'snapshots', revision))
+    candidates.append(os.path.join(cache, 'snapshots', 'main'))
+    snapshots = os.path.join(cache, 'snapshots')
+    if os.path.isdir(snapshots):
+        candidates.extend(os.path.join(snapshots, name) for name in os.listdir(snapshots))
+    return list(dict.fromkeys(candidates))
+
+
+def model_snapshot(model, root=None):
+    root = root or huggingface_hub_roots()[0]
+    return model_snapshots(model, root)[0]
 
 
 def model_cache_dir(lang):
-    """返回可用的本地模型目录，否则返回 None。"""
-    path = model_snapshot(MODELS[lang])
-    if os.path.exists(os.path.join(path, 'weights.npz')):
-        return path
+    """按 HF_HOME、XDG、旧默认缓存顺序返回完整模型。"""
+    for root in huggingface_hub_roots():
+        for path in model_snapshots(MODELS[lang], root):
+            weights = os.path.join(path, 'weights.npz')
+            config = os.path.join(path, 'config.json')
+            if os.path.exists(config) \
+                    and os.path.exists(weights) and os.path.getsize(weights) >= 1_000_000_000:
+                return path
     return None
 
 
 def ensure_model(lang):
     """确认模型完整；不完整则通过 hf-mirror 下载。"""
     model = MODELS[lang]
-    snapshot = model_snapshot(model)
+    snapshot = model_snapshot(model, huggingface_hub_roots()[0])
     files = [f for f in os.listdir(snapshot) if f != 'weights.npz'] if os.path.isdir(snapshot) else []
     weights = os.path.join(snapshot, 'weights.npz')
     need_weights = not os.path.exists(weights) or os.path.getsize(weights) < 1_000_000_000
@@ -113,7 +148,8 @@ def ensure_model(lang):
 
 def ensure_whisper_ready(lang):
     ensure_deps()
-    ensure_model(lang)
+    if not model_cache_dir(lang):
+        ensure_model(lang)
 
 
 def probe_audio_duration(audio_path):
@@ -218,6 +254,7 @@ def assess_transcript(transcript, audio_duration):
         violations.append(_violation('empty_transcript', 0, 1, 0, audio_duration))
 
     previous_start = -1.0
+    previous_end = -1.0
     valid_segments = []
     for index, segment in enumerate(segments):
         start = segment.get('start')
@@ -229,9 +266,13 @@ def assess_transcript(transcript, audio_duration):
                                          start if isinstance(start, (int, float)) else 0,
                                          end if isinstance(end, (int, float)) else 0))
             continue
-        if start + 1 < previous_start:
-            violations.append(_violation('non_monotonic_segments', start, previous_start, start, end))
+        if start + 1 < previous_start or end + 1 < previous_end:
+            violations.append(_violation('non_monotonic_segments',
+                                         {'start': start, 'end': end},
+                                         {'start': previous_start, 'end': previous_end},
+                                         start, end))
         previous_start = max(previous_start, start)
+        previous_end = max(previous_end, end)
         if _normalize(segment.get('text', '')):
             valid_segments.append(segment)
         words = segment.get('words') or []
@@ -457,7 +498,7 @@ def render_transcript_text(transcript):
 
 
 def chunk_and_emit(video_id, title, transcript, lang, out_dir, id_field='video_id'):
-    """仅为通过门禁的 ASR 结果生成交付物并输出 RESULT_JSON。"""
+    """可回滚地发布通过门禁的 ASR 交付物。"""
     quality = transcript.get('quality', {})
     if not quality.get('ok'):
         raise ASRQualityError(quality)
@@ -497,6 +538,14 @@ def chunk_and_emit(video_id, title, transcript, lang, out_dir, id_field='video_i
                 handle.write(full_text[offset:offset + CHARS_PER_CHUNK])
             staged.append((staged_chunk, chunk_file))
             chunks.append(chunk_file)
+        active_chunks = set(chunks)
+        stale_chunks = []
+        for filename in os.listdir(out_dir):
+            path = os.path.join(out_dir, filename)
+            if re.fullmatch(re.escape(video_id) + r'_chunk_\d+\.txt', filename) \
+                    and os.path.isfile(path) and path not in active_chunks:
+                stale_chunks.append(path)
+
         backups = []
         committed = []
         try:
@@ -507,7 +556,11 @@ def chunk_and_emit(video_id, title, transcript, lang, out_dir, id_field='video_i
                     backups.append((backup, destination))
                 os.replace(source, destination)
                 committed.append(destination)
-        except Exception:
+            for index, path in enumerate(stale_chunks, start=len(staged)):
+                backup = os.path.join(stage, f'backup-{index:03d}')
+                os.replace(path, backup)
+                backups.append((backup, path))
+        except BaseException:
             for destination in reversed(committed):
                 if os.path.exists(destination):
                     os.remove(destination)
@@ -516,17 +569,23 @@ def chunk_and_emit(video_id, title, transcript, lang, out_dir, id_field='video_i
                     os.replace(backup, destination)
             raise
 
-    if not os.path.exists(summary_md):
-        with open(summary_md, 'w', encoding='utf-8') as handle:
+    summary_temp = None
+    try:
+        with tempfile.NamedTemporaryFile(
+                mode='w', encoding='utf-8', dir=out_dir,
+                prefix='.summary-placeholder-', delete=False) as handle:
+            summary_temp = handle.name
             handle.write(f'# {title} —— 内容总结\n\n')
             handle.write('<!-- 总结内容将由后续流程生成 -->\n')
-
-    active_chunks = set(chunks)
-    for filename in os.listdir(out_dir):
-        path = os.path.join(out_dir, filename)
-        if re.fullmatch(re.escape(video_id) + r'_chunk_\d+\.txt', filename) \
-                and path not in active_chunks:
-            os.remove(path)
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            os.link(summary_temp, summary_md)
+        except FileExistsError:
+            pass
+    finally:
+        if summary_temp and os.path.exists(summary_temp):
+            os.remove(summary_temp)
 
     payload = {
         'schema_version': '1.0',

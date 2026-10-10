@@ -14,7 +14,6 @@ import os
 import re
 import sys
 import json
-import shutil
 import subprocess
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -42,7 +41,7 @@ def extract_video_id(arg):
 
 def ytdlp_base_args():
     """公共参数：JS 挑战求解器（新版 yt-dlp 必须）+ 可选浏览器 Cookie。"""
-    args = ['yt-dlp', '--no-update', '--remote-components', 'ejs:github']
+    args = [sys.executable, '-m', 'yt_dlp', '--no-update']
     browser = os.environ.get('YT_COOKIES_FROM_BROWSER')
     if browser:
         args += ['--cookies-from-browser', browser]
@@ -121,6 +120,9 @@ def fetch_subtitle(info, video_id, url, extra_args, out_dir):
         url,
     ], capture_output=True, text=True)
 
+    if r.returncode != 0:
+        print((r.stderr or '')[-500:], flush=True)
+        return None
     sub_files = [f for f in os.listdir(out_dir) if f.endswith('.vtt')]
     if not sub_files:
         return None
@@ -153,9 +155,6 @@ def main():
     if len(sys.argv) < 2:
         print('Usage: python3 download_and_chunk.py <YouTube_URL_or_VideoID>')
         sys.exit(1)
-
-    if not shutil.which('yt-dlp'):
-        run(['pip3', 'install', '--break-system-packages', '-U', 'yt-dlp'], check=True)
 
     video_id = extract_video_id(sys.argv[1])
     print(f'[*] Processing {video_id}...', flush=True)

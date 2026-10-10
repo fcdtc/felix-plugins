@@ -15,12 +15,12 @@ Bilibili ASR 兜底：视频无 CC 字幕时，下载音频并用 mlx-whisper �
 import os
 import sys
 import json
+import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import common  # noqa: E402
 
 COOKIE_FILE = os.path.expanduser('~/.openclaw/workspace/bilibili_cookie.txt')
-NETSCAPE_COOKIE = '/tmp/bili_asr_cookies.txt'
 
 
 def resolve_output_base():
@@ -44,39 +44,49 @@ def write_netscape_cookie():
     for p in parts:
         k, _, v = p.partition('=')
         lines.append(f'.bilibili.com\tTRUE\t/\tFALSE\t0\t{k.strip()}\t{v.strip()}')
-    open(NETSCAPE_COOKIE, 'w').write('\n'.join(lines))
-    return True
+    handle = tempfile.NamedTemporaryFile(
+        mode='w', encoding='utf-8', prefix='bili-asr-', suffix='.cookies.txt', delete=False)
+    try:
+        handle.write('\n'.join(lines))
+    finally:
+        handle.close()
+    return handle.name
 
 
 def download_audio(bv_id, p_num=0):
     """用 yt-dlp 下载音频，返回 (音频路径, 标题, 产物目录)。"""
     url = f'https://www.bilibili.com/video/{bv_id}/'
     # 分P视频：yt-dlp 会把多P当作 playlist，用 --playlist-items 选指定的 P
-    page_args = ['--playlist-items', str(p_num)] if p_num > 0 else []
+    page_args = ['--playlist-items', str(p_num + 1)]
 
     # 取标题 + 选音频轨（偏好高码率 m4a）
-    cookie_args = ['--cookies', NETSCAPE_COOKIE] if write_netscape_cookie() else []
-    info = common.run([
-        'yt-dlp', '--no-update', *cookie_args,
-        '-f', 'ba', '-j', *page_args, url
-    ], capture_output=True, text=True)
-    title = bv_id
-    if info.returncode == 0 and info.stdout.strip():
-        try:
-            title = json.loads(info.stdout.strip().splitlines()[-1]).get('title', bv_id)
-        except Exception:
-            pass
-    # 产物目录以视频标题命名（拿不到标题时回退 BV_ID）
-    out_dir = common.output_dir(resolve_output_base(), title, bv_id)
-    audio_path = os.path.join(out_dir, 'audio.m4a')
-    if not os.path.exists(audio_path):
-        common.run([
-            'yt-dlp', '--no-update', *cookie_args,
-            '-f', '30280/30232/30216/bestaudio',
-            '-o', audio_path,
-            *page_args, url
-        ], check=True)
-    return audio_path, title, out_dir
+    cookie_path = write_netscape_cookie()
+    cookie_args = ['--cookies', cookie_path] if cookie_path else []
+    try:
+        info = common.run([
+            sys.executable, '-m', 'yt_dlp', '--no-update', *cookie_args,
+            '-f', 'ba', '-j', *page_args, url
+        ], capture_output=True, text=True)
+        title = bv_id
+        if info.returncode == 0 and info.stdout.strip():
+            try:
+                title = json.loads(info.stdout.strip().splitlines()[-1]).get('title', bv_id)
+            except Exception:
+                pass
+        # 产物目录以视频标题命名（拿不到标题时回退 BV_ID）
+        out_dir = common.output_dir(resolve_output_base(), title, bv_id)
+        audio_path = os.path.join(out_dir, 'audio.m4a')
+        if not os.path.exists(audio_path):
+            common.run([
+                sys.executable, '-m', 'yt_dlp', '--no-update', *cookie_args,
+                '-f', '30280/30232/30216/bestaudio',
+                '-o', audio_path,
+                *page_args, url
+            ], check=True)
+        return audio_path, title, out_dir
+    finally:
+        if cookie_path and os.path.exists(cookie_path):
+            os.remove(cookie_path)
 
 
 def main():

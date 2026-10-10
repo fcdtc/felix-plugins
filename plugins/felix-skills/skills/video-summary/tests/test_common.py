@@ -79,6 +79,19 @@ class TranscriptQualityTests(unittest.TestCase):
         report = common.assess_transcript(transcript(segments, 100), 100)
         self.assertIn('invalid_segment_timestamp', {item['code'] for item in report['violations']})
 
+    def test_segment_end_time_must_not_move_backwards(self):
+        segments = [segment('覆盖很长范围的第一段', 0, 119),
+                    segment('异常嵌套的第二段', 100, 101),
+                    segment('恢复向后的第三段', 102, 119)]
+        report = common.assess_transcript(transcript(segments, 120), 120)
+        self.assertIn('non_monotonic_segments',
+                      {item['code'] for item in report['violations']})
+
+    def test_hf_hub_cache_takes_priority(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with mock.patch.dict(common.os.environ, {'HF_HUB_CACHE': directory}, clear=False):
+                self.assertEqual(common.huggingface_hub_roots()[0], directory)
+
     def test_empty_transcript_is_rejected(self):
         report = common.assess_transcript({'text': '', 'segments': []}, 60)
         codes = {item['code'] for item in report['violations']}
@@ -194,6 +207,46 @@ class WhisperContractTests(unittest.TestCase):
                 mock.patch.object(common, 'assess_transcript', side_effect=[failed, failed]):
             with self.assertRaises(common.ASRQualityError):
                 common.transcribe('/audio.m4a', 'zh')
+
+    def test_summary_placeholder_publish_never_overwrites_existing_summary(self):
+        with tempfile.TemporaryDirectory() as directory:
+            summary = Path(directory) / '总结稿.md'
+            summary.write_text('# 已完成总结\n\n' + ('完整中文正文' * 50), encoding='utf-8')
+            before = summary.read_bytes()
+            data = transcript([segment('一段足够正常的内容', 0, 10)], 10)
+            data.update({'quality': {'ok': True, 'policy_version': 1, 'violations': []},
+                         'repair_rounds': 0})
+            with redirect_stdout(io.StringIO()):
+                common.chunk_and_emit('id', '标题', data, 'zh', directory)
+            self.assertEqual(summary.read_bytes(), before)
+
+    def test_delivery_commit_rolls_back_when_interrupted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            old_files = {
+                'asr_transcript.json': 'old transcript',
+                'asr_quality.json': 'old quality',
+                '逐字稿.md': 'old verbatim',
+                'id_chunk_0.txt': 'old chunk',
+            }
+            for name, content in old_files.items():
+                (Path(directory) / name).write_text(content, encoding='utf-8')
+            data = transcript([segment('一段足够正常的内容', 0, 10)], 10)
+            data.update({'quality': {'ok': True, 'policy_version': 1, 'violations': []},
+                         'repair_rounds': 0})
+            real_replace = common.os.replace
+            calls = {'count': 0}
+
+            def interrupted_replace(source, destination):
+                calls['count'] += 1
+                if calls['count'] == 4:
+                    raise KeyboardInterrupt()
+                return real_replace(source, destination)
+
+            with mock.patch.object(common.os, 'replace', side_effect=interrupted_replace):
+                with self.assertRaises(KeyboardInterrupt):
+                    common.chunk_and_emit('id', '标题', data, 'zh', directory)
+            for name, content in old_files.items():
+                self.assertEqual((Path(directory) / name).read_text(encoding='utf-8'), content)
 
     def test_delivery_commit_rolls_back_when_replace_fails(self):
         with tempfile.TemporaryDirectory() as directory:

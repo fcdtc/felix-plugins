@@ -6,6 +6,9 @@ from json import loads, dumps
 from bilibili_api import Credential, cheese, login_v2
 from qrcode import QRCode
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import common  # noqa: E402
+
 CHARS_PER_CHUNK = 100000
 
 
@@ -66,9 +69,20 @@ def save_subtitle_chunks(subtitle_content, ep_id, title=""):
         return None
     
     total_chars = len(full_text)
-    output_dir = os.path.join(resolve_output_base(), ep_id)
-    os.makedirs(output_dir, exist_ok=True)
-    
+    output_dir = common.output_dir(resolve_output_base(), title, ep_id)
+
+    verbatim_md = os.path.join(output_dir, '逐字稿.md')
+    with open(verbatim_md, 'w', encoding='utf-8') as f:
+        f.write(f'# {title or ep_id}\n\n')
+        f.write('> 本逐字稿来自 Bilibili 课程字幕。\n\n---\n\n')
+        f.write(full_text)
+
+    summary_md = os.path.join(output_dir, '总结稿.md')
+    if not os.path.exists(summary_md):
+        with open(summary_md, 'w', encoding='utf-8') as f:
+            f.write(f'# {title or ep_id} —— 内容总结\n\n')
+            f.write('<!-- 总结内容将由后续流程生成 -->\n')
+
     chunks = []
     for i in range(0, total_chars, CHARS_PER_CHUNK):
         chunk_content = full_text[i : i + CHARS_PER_CHUNK]
@@ -78,9 +92,14 @@ def save_subtitle_chunks(subtitle_content, ep_id, title=""):
         chunks.append(chunk_file)
     
     return {
+        "schema_version": "1.0",
+        "ok": True,
         "ep_id": ep_id,
         "title": title,
         "total_chars": total_chars,
+        "source": "subtitle",
+        "transcript_lang": "zh",
+        "deliverables": {"verbatim": verbatim_md, "summary": summary_md},
         "chunks": chunks
     }
 

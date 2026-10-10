@@ -21,7 +21,8 @@ def main():
     common.ensure_deps()
     for l in langs:
         print(f'[setup] 准备 {l} 模型: {common.MODELS[l]}', flush=True)
-        common.ensure_model(l)
+        if not common.model_cache_dir(l):
+            common.ensure_model(l)
     print('[setup] whisper 初始化完成，Bilibili / YouTube 转写均可直接使用', flush=True)
 
 

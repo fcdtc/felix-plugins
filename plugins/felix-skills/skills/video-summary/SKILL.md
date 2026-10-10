@@ -6,9 +6,9 @@ disable-model-invocation: true
 
 # 视频字幕下载 + 中文总结（Bilibili / YouTube）
 
-统一处理两类视频：根据用户输入自动识别平台，走「字幕下载 → ASR 兜底 → 中文总结」两级流程。本 skill 可由 Claude Code 与 Codex 执行，但 ASR 兜底依赖 macOS、Apple Silicon、Python 3、ffmpeg、yt-dlp、网络访问和足够磁盘空间。
+统一处理 Bilibili 与 YouTube 视频，按「字幕下载 → ASR 兜底 → 中文总结」流程执行。本 skill 可由 Claude Code 与 Codex 使用。
 
-执行前先从当前已加载的 `SKILL.md` 所在目录解析绝对路径 `<SKILL_DIR>`；该名称是下文的说明性占位符，不是假定存在的环境变量。下载媒体、安装依赖或预热模型前，先检查上述运行条件；不满足时停止并给出准备步骤，不直接修改系统环境。
+先从当前 `SKILL.md` 所在目录解析绝对路径 `<SKILL_DIR>`。所有公开动作统一通过 `python3 <SKILL_DIR>/scripts/launcher.py <action> ...` 执行；launcher 首次运行时准备专用虚拟环境，后续自动复用，无需手工 activate。ASR 兜底会检查本机兼容性和 `ffmpeg` / `ffprobe` 等外部工具；条件不满足时停止并给出准备步骤。
 
 ## 第零步：平台识别（路由）
 
@@ -19,15 +19,15 @@ disable-model-invocation: true
 
 识别后**阅读对应 reference 文档**再执行，本文只描述两边共享的流程与约定。
 
-## 初始化：whisper 准备（两边共享，仅需一次）
+## 初始化 ASR（可选）
 
-ASR 兜底依赖 mlx-whisper（en 用 turbo 模型，zh 用 large-v3，约 2.9G，经 hf-mirror 下载约 15 分钟）。若本机从未跑过，先执行共享初始化脚本预热：
+只有字幕不可用、需要 ASR 兜底时才需预热模型：
 
 ```bash
-python3 <SKILL_DIR>/scripts/setup_whisper.py [en|zh|all]   # 默认 all
+python3 <SKILL_DIR>/scripts/launcher.py setup [en|zh|all]   # 默认 all
 ```
 
-之后所有平台脚本的 ASR 兜底会直接复用本地模型，转写很快。**长时间运行**：模型下载/转写可能超过单条命令超时，使用当前 agent 环境提供的后台任务与状态监控能力，并同时监控成功和失败终态；不要假设 `nohup` 是唯一实现。
+模型下载和长视频转写可能超过单条命令超时；使用当前环境的后台任务与状态监控能力，同时监控成功和失败终态。
 
 ## 总体流程（两级降级）
 
@@ -52,7 +52,7 @@ python3 <SKILL_DIR>/scripts/setup_whisper.py [en|zh|all]   # 默认 all
 5. 运行最终交付校验：
 
 ```bash
-python3 <SKILL_DIR>/scripts/validate_delivery.py \
+python3 <SKILL_DIR>/scripts/launcher.py validate-delivery \
   --verbatim "<deliverables.verbatim>" \
   --summary "<deliverables.summary>"
 ```
@@ -63,6 +63,7 @@ python3 <SKILL_DIR>/scripts/validate_delivery.py \
 
 ## 资源
 
-- **公共脚本**: `scripts/common.py` — 依赖检查、hf-mirror 模型下载、mlx-whisper 转写、分块 + `RESULT_JSON` 输出（平台脚本共享）。
-- **公共脚本**: `scripts/setup_whisper.py` — 一键初始化依赖与模型预热。
+- **公开入口**: `scripts/launcher.py` — 专用虚拟环境初始化、动作路由和后续复用。
+- **公共脚本**: `scripts/common.py` — 运行时验证、ASR 转写、质量门禁和交付输出。
+- **模型初始化**: `scripts/setup_whisper.py` — 在专用环境内检查并预热模型。
 - Bilibili / YouTube 平台脚本见各自 reference 文档。

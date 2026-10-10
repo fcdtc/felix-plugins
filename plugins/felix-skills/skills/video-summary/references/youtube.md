@@ -11,7 +11,7 @@
 ## 第二步：下载字幕（主路径）
 
 ```bash
-python3 <SKILL_DIR>/scripts/youtube_download_and_chunk.py <URL或ID>
+python3 <SKILL_DIR>/scripts/launcher.py youtube-subtitles <URL或ID>
 ```
 
 - 字幕语言优先级：人工字幕（中文 > 英文）> 原语言自动字幕。**绝不用 YouTube 机翻字幕**（英文视频的机器生成中文字幕属于此类）——脚本会自动识别并跳过。
@@ -21,7 +21,7 @@ python3 <SKILL_DIR>/scripts/youtube_download_and_chunk.py <URL或ID>
 ## 第三步：ASR 兜底（仅当上一步失败）
 
 ```bash
-python3 <SKILL_DIR>/scripts/youtube_asr_fallback.py <URL或ID> [en|zh]
+python3 <SKILL_DIR>/scripts/launcher.py youtube-asr <URL或ID> [en|zh]
 ```
 
 语言选择规则：
@@ -39,9 +39,9 @@ python3 <SKILL_DIR>/scripts/youtube_asr_fallback.py <URL或ID> [en|zh]
 
 ## 鉴权说明
 
-YouTube 会做 bot 校验。脚本内置自动降级链：裸请求 → Chrome Cookie → Safari Cookie，并自动启用 yt-dlp 的 JS 挑战求解器（`--remote-components ejs:github`）。若全部失败，让用户设置 `YT_COOKIES_FROM_BROWSER=<浏览器名>` 后重试（Safari 受 macOS 沙箱限制可能无权限读取）。
+YouTube 会做 bot 校验。脚本内置自动降级链：裸请求 → Chrome Cookie → Safari Cookie。若全部失败，让用户设置 `YT_COOKIES_FROM_BROWSER=<浏览器名>` 后重试（Safari 受 macOS 沙箱限制可能无权限读取）。
 
 ## 脚本
 
 - `scripts/youtube_download_and_chunk.py` — 字幕下载 + 分块（主路径）。
-- `scripts/youtube_asr_fallback.py` — 音频下载（含 bot 校验降级链）+ mlx-whisper 转写（兜底）。
+- `scripts/youtube_asr_fallback.py` — 音频下载、语音转写与质量校验（兜底）。
