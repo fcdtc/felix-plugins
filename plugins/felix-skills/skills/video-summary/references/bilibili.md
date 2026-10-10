@@ -27,7 +27,7 @@ python3 <SKILL_DIR>/scripts/bilibili_asr_fallback.py <BV_ID> [P_NUM]
 - 固定用中文模型（large-v3）转写。
 - 分P视频传 `P_NUM` 选指定 P。
 - 转写速度：Apple Silicon 上约比实时快 3~5 倍（20 分钟视频约 3~6 分钟转完）。
-- 输出约定与主流程一致（同样输出 `RESULT_JSON`，多了 `"source": "asr"` 字段）。
+- 脚本会分段转写并执行重复、时间戳和覆盖门禁。当前命令输出 `RESULT_JSON` 且 `"ok": true` 才算成功；输出 `ASR_ERROR_JSON` 时停止并报告失败区间，不使用旧逐字稿继续总结。
 
 ## 课程（Cheese）工作流程
 

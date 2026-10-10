@@ -100,10 +100,13 @@ def main():
     print(f'[model] 确认模型（{lang}）...', flush=True)
     common.ensure_model(lang)
 
-    print('[asr] 转写中...', flush=True)
-    txt_path = common.transcribe(audio_path, out_dir, lang)
-
-    common.chunk_and_emit(video_id, title, txt_path, lang)
+    print('[asr] 分段转写并校验中...', flush=True)
+    try:
+        transcript = common.transcribe(audio_path, lang)
+    except common.ASRQualityError as error:
+        common.emit_asr_error(error)
+        raise SystemExit(2)
+    common.chunk_and_emit(video_id, title, transcript, lang, out_dir)
 
 
 if __name__ == '__main__':

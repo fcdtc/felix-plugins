@@ -190,6 +190,8 @@ async def main():
 
         print(f"[*] Success. Total chunks: {len(chunks)}")
         print("RESULT_JSON:" + json.dumps({
+            "schema_version": "1.0",
+            "ok": True,
             "bv_id": bv_id,
             "title": title,
             "total_chars": total_chars,

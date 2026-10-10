@@ -15,7 +15,7 @@ python3 <SKILL_DIR>/scripts/youtube_download_and_chunk.py <URL或ID>
 ```
 
 - 字幕语言优先级：人工字幕（中文 > 英文）> 原语言自动字幕。**绝不用 YouTube 机翻字幕**（英文视频的机器生成中文字幕属于此类）——脚本会自动识别并跳过。
-- 成功标准：stdout 出现 `RESULT_JSON:{...}`。
+- 成功标准：当前命令 stdout 出现 `RESULT_JSON:{...}`，且其中 `"ok": true`。
 - 失败（无字幕 / 地区受限）：脚本打印 `ERROR: 没找到字幕`，进入第三步。
 
 ## 第三步：ASR 兜底（仅当上一步失败）
@@ -28,7 +28,7 @@ python3 <SKILL_DIR>/scripts/youtube_asr_fallback.py <URL或ID> [en|zh]
 - **默认 `en`**：YouTube 内容以英文为主，whisper 英文识别最准。判断不准时直接用 en。
 - 传 `zh`：仅当用户明确说视频是中文且无字幕。
 
-成功标准同上：`RESULT_JSON` 出现。
+脚本会分段转写并执行质量门禁。成功标准同上；若输出 `ASR_ERROR_JSON`，停止并报告失败区间，不使用目录里的旧逐字稿继续总结。
 
 ## 产物位置
 

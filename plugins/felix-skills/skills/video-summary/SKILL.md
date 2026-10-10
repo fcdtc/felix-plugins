@@ -41,37 +41,25 @@ python3 <SKILL_DIR>/scripts/setup_whisper.py [en|zh|all]   # 默认 all
 
 具体命令见各平台 reference 文档。
 
-## 交付产物（两边统一）
+## 交付流程（两边统一）
 
-每个视频最终交付**两份 Markdown 文档**，缺一不可：
+每个视频最终交付**两份 Markdown 文档**：`逐字稿.md` 和中文 `总结稿.md`。
 
-| 文件 | 说明 |
-|------|------|
-| **逐字稿.md** | 完整文字稿（视频标题 + 正文，原文语言保留）。由脚本自动生成，内容不再改动。 |
-| **总结稿.md** | 结构化中文总结。脚本先创建占位文件，由总结流程写入正文。 |
+1. 执行平台 reference 指定的字幕或 ASR 脚本。
+2. 只接受**当前命令**输出的 `RESULT_JSON`；普通视频结果必须有 `"ok": true`。`ASR_ERROR_JSON` 是失败终态：报告其中的质量问题，不使用目录里的旧文件继续总结。
+3. 从 `RESULT_JSON.chunks` 生成中文结构化总结，覆盖关键技术细节、数据和逻辑，再合并去重；多个 chunk 彼此独立时优先使用当前平台可用的并行任务能力，不支持委派时顺序处理。
+4. 用最终正文覆盖 `deliverables.summary` 的占位内容，保留一级标题。
+5. 运行最终交付校验：
 
-- 路径由 `RESULT_JSON` 中的 `deliverables.verbatim` / `deliverables.summary` 给出；`chunks` 仅供内部并行总结使用，不是交付物。
-- 输出目录落在**运行脚本时的 cwd** 下，目录名统一用**视频标题**命名（净化非法字符、截断 80 字符；拿不到标题时回退 ID）：`bili_temp/<视频标题>/` 或 `yt_temp/<视频标题>/`。不要 `cd` 进 skill 目录运行。
-- 脚本路径用 skill base 目录的**绝对路径**：`python3 <SKILL_DIR>/scripts/xxx.py`。
+```bash
+python3 <SKILL_DIR>/scripts/validate_delivery.py \
+  --verbatim "<deliverables.verbatim>" \
+  --summary "<deliverables.summary>"
+```
 
-## 总结稿生成流程（两边统一）
+6. 只有命令退出码为 0 且输出 `DELIVERY_JSON` 中 `"ok": true`，才向用户交付两份文件路径；否则修复总结或报告阻塞，不宣布完成。
 
-1. 从 `RESULT_JSON` 取 `chunks` 列表，优先使用当前平台可用的 subagent/并行任务能力逐块总结，再合并去重；平台不支持委派时顺序处理。
-2. 把最终总结**写入** `deliverables.summary` 指向的 `总结稿.md`（覆盖占位内容），保留一级标题 `# <视频标题> —— 内容总结`。
-3. **总结稿必须是中文**——逐字稿可以是英文，总结稿不行。
-4. 交付时向用户明确告知两份文件路径，以 `总结稿.md` 为主要交付物。
-
-### 分块总结子智能体提示词模板
-
-> 请为以下视频字幕片段生成一份**中文**详细总结。
-> **要求：**
-> - 捕获所有关键的技术细节、具体的数据点和逻辑步骤。
-> - 使用标题保持清晰的结构（Markdown 二级/三级标题）。
-> - 明确主旨和可执行的要点。
-> - 风格：专业、信息丰富且详细。
-> - 直接输出 Markdown 正文，不要重复视频标题。
->
-> **字幕文件：** [PATH_TO_CHUNK]
+`chunks`、`asr_transcript.json` 和 `asr_quality.json` 是内部诊断产物，不是交付物。输出目录位于运行脚本时的 cwd，以净化并截断后的视频标题命名；脚本一律使用 `<SKILL_DIR>` 下的绝对路径执行。
 
 ## 资源
 

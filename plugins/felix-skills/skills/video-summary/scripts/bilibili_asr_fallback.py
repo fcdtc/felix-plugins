@@ -51,7 +51,6 @@ def write_netscape_cookie():
 def download_audio(bv_id, p_num=0):
     """用 yt-dlp 下载音频，返回 (音频路径, 标题, 产物目录)。"""
     url = f'https://www.bilibili.com/video/{bv_id}/'
-    url = f'https://www.bilibili.com/video/{bv_id}/'
     # 分P视频：yt-dlp 会把多P当作 playlist，用 --playlist-items 选指定的 P
     page_args = ['--playlist-items', str(p_num)] if p_num > 0 else []
 
@@ -69,8 +68,6 @@ def download_audio(bv_id, p_num=0):
             pass
     # 产物目录以视频标题命名（拿不到标题时回退 BV_ID）
     out_dir = common.output_dir(resolve_output_base(), title, bv_id)
-    safe_title = common.sanitize_filename(title)
-
     audio_path = os.path.join(out_dir, 'audio.m4a')
     if not os.path.exists(audio_path):
         common.run([
@@ -101,12 +98,15 @@ def main():
     print('[model] 确认 large-v3 模型...', flush=True)
     common.ensure_model(lang)
 
-    # 4. 转写
-    print('[asr] 转写中（首次较慢，之后同语言会快）...', flush=True)
-    txt_path = common.transcribe(audio_path, out_dir, lang)
-
-    # 5. 分块 + 输出
-    common.chunk_and_emit(bv_id, title, txt_path, lang, id_field='bv_id')
+    # 4. 转写 + 质量门禁
+    print('[asr] 分段转写并校验中（首次较慢，之后同语言会快）...', flush=True)
+    try:
+        transcript = common.transcribe(audio_path, lang)
+    except common.ASRQualityError as error:
+        common.emit_asr_error(error)
+        raise SystemExit(2)
+    # 5. 仅为通过门禁的结果生成交付物
+    common.chunk_and_emit(bv_id, title, transcript, lang, out_dir, id_field='bv_id')
 
 
 if __name__ == '__main__':
