@@ -1,70 +1,182 @@
 # felix-plugins
 
-felix 的个人 Agent Skills 仓库，同时支持 Claude Code 与 Codex。技能正文只维护一份；Claude Code 使用原生 plugin marketplace，Codex 使用 `skills` CLI。
+felix 的 Agent Skills 仓库。同一份 `SKILL.md` 可以通过 Claude Code plugin、Codex plugin，或标准 Agent Skills 目录分发；平台专属的展示和调用策略放在对应 sidecar 中。
 
-## 支持范围
+## 安装
 
-所有 skill 都要求用户显式调用，不会由模型隐式触发。
+Marketplace 名为 `felix`，其中的插件名为 `felix-skills`。远程安装适合日常使用，本地安装适合开发和调试当前工作区。
 
-| Skill | Claude Code | Codex | 备注 |
-|---|---:|---:|---|
-| `adhd` | ✓ | ✓ | |
-| `codebase-query` | ✓ | ✓ | |
-| `codebase-tutor` | ✓ | ✓ | |
-| `deepinit` | ✓ | ✓ | 按 target 生成平台对应的本地导航文件 |
-| `go-service-structure` | ✓ | ✓ | |
-| `html-ppt` | ✓ | ✓ | 部分导出能力需要本机 Chrome |
-| `note` | ✓ | ✓ | 使用 `~/basic-memory/` |
-| `note-import` | ✓ | ✓ | 同时安装 `note` |
-| `note-lint` | ✓ | ✓ | 同时安装 `note` |
-| `note-polish` | ✓ | ✓ | 同时安装 `note` |
-| `note-query` | ✓ | ✓ | 同时安装 `note` |
-| `prompt-builder` | ✓ | ✓ | |
-| `video-summary` | ✓ | ✓ | ASR 兜底要求 macOS/Apple Silicon、ffmpeg、yt-dlp 和网络 |
-| `ticket-loop` | ✓ | — | **Claude Code only**：依赖 Claude CLI Task Session、resume、权限模式与成本协议 |
+> 不要同时通过 plugin 和文件复制工具安装同一批 skill，否则客户端中可能出现重复项。
 
-机器可读的完整边界见 [`plugins/felix-skills/compatibility.json`](plugins/felix-skills/compatibility.json)。
+### Claude Code
 
-## Claude Code 安装
+#### 从远程仓库安装
 
-在 Claude Code 会话中运行：
+```bash
+claude plugin marketplace add fcdtc/felix-plugins
+claude plugin install felix-skills@felix
+```
+
+#### 从本地仓库安装
+
+传入包含 `.claude-plugin/marketplace.json` 的仓库根目录，而不是 `plugins/felix-skills` 子目录：
+
+```bash
+claude plugin marketplace add /absolute/path/to/felix-plugins
+claude plugin install felix-skills@felix
+```
+
+修改本地 skill 后，可以重启 Claude Code，或在会话中运行：
 
 ```text
-/plugin marketplace add fcdtc/felix-plugins
-/plugin install felix-skills@felix
+/reload-plugins
 ```
 
-安装后 skill 以 `felix-skills:<skill名>` 形式出现。
+必要时强制重新加载：
 
-## Codex 安装
+```text
+/reload-plugins --force
+```
 
-`skills` CLI 能从本仓库的嵌套目录发现全部 14 个 skill。因为 `ticket-loop` 是 Claude Code only，Codex 安装时必须明确选择下面 13 个兼容 skill，不能使用 `--skill '*'`。
+可通过以下命令检查安装状态：
 
 ```bash
-CODEX_SKILLS="adhd codebase-query codebase-tutor deepinit go-service-structure html-ppt note note-import note-lint note-polish note-query prompt-builder video-summary"
+claude plugin marketplace list
+claude plugin list
+claude plugin details felix-skills
 ```
 
-### 项目级
+Claude Code 中的 skill 使用 `felix-skills:<skill-name>` 命名空间。
 
-在目标仓库根目录运行；项目级是默认 scope：
+### Codex CLI
+
+#### 从远程仓库安装
 
 ```bash
-npx skills@latest add fcdtc/felix-plugins \
-  --agent codex --skill $CODEX_SKILLS
+codex plugin marketplace add fcdtc/felix-plugins
+codex plugin add felix-skills@felix
 ```
 
-安装器会把 skill 安装到当前项目的 agent skills 目录，并生成项目级 lockfile。也可以省略 `--skill` 进入交互选择，但不要选择 `ticket-loop`。
+#### 从本地仓库安装
 
-### 用户级
-
-添加 `--global`，使 skills 对该用户的 Codex 项目可用：
+同样传入 marketplace 仓库根目录：
 
 ```bash
-npx skills@latest add fcdtc/felix-plugins \
-  --global --agent codex --skill $CODEX_SKILLS
+codex plugin marketplace add /absolute/path/to/felix-plugins
+codex plugin add felix-skills@felix
 ```
 
-需要非交互安装时可额外传 `--yes`。`note-import`、`note-lint`、`note-polish`、`note-query` 依赖 sibling `note` 目录，因此不要单独安装这些 consumer。
+安装或更新插件后，重新开启 Codex 会话，再通过 `/plugins` 和 `/skills` 检查插件及其 skills。
+
+Codex IDE 扩展不使用 plugin marketplace 时，可以把所需 skill 安装到项目级 `.agents/skills/` 或用户级 `~/.agents/skills/`。也可以使用通用 Agent Skills 安装器，但必须显式选择活动 skill；不要使用会把 `skills/deprecated/` 一并复制的全量或通配安装方式。
+
+## Skill 发现范围
+
+当前插件按三类目录组织：
+
+1. **顶层活动 skills**
+
+   ```text
+   plugins/felix-skills/skills/<skill-name>/SKILL.md
+   ```
+
+   这是插件的默认目录，无需在 `plugin.json` 中逐项声明。
+
+2. **嵌套活动 skills**
+
+   当前包含：
+
+   ```text
+   plugins/felix-skills/skills/mattpocock/engineering/<skill-name>/SKILL.md
+   plugins/felix-skills/skills/mattpocock/productivity/<skill-name>/SKILL.md
+   ```
+
+   这两个集合由 [`plugins/felix-skills/.claude-plugin/plugin.json`](plugins/felix-skills/.claude-plugin/plugin.json) 的 `skills` 字段显式注册。集合内的说明见：
+
+   - [Engineering skills](plugins/felix-skills/skills/mattpocock/engineering/README.md)
+   - [Productivity skills](plugins/felix-skills/skills/mattpocock/productivity/README.md)
+
+3. **弃用 skills**
+
+   ```text
+   plugins/felix-skills/skills/deprecated/<skill-name>/SKILL.md
+   ```
+
+   此目录只保存历史内容，不属于插件的活动发布范围。
+
+各 skill 是否只能显式调用，由其 `SKILL.md` frontmatter 和 `agents/openai.yaml` 策略决定；仓库中同时存在 user-invoked 和 model-invoked skills。
+
+## 添加和组织 Skill
+
+### 添加顶层 Skill
+
+使用默认结构：
+
+```text
+plugins/felix-skills/skills/my-skill/SKILL.md
+```
+
+插件会从默认 `skills/` 目录发现它，不需要修改 `plugin.json` 的 `skills` 数组。
+
+### 添加到已有嵌套集合
+
+例如新增：
+
+```text
+plugins/felix-skills/skills/mattpocock/engineering/my-skill/SKILL.md
+```
+
+由于 `./skills/mattpocock/engineering` 已经注册，无需再次修改 manifest。
+
+### 添加新的二级或多级集合
+
+假设目录是：
+
+```text
+plugins/felix-skills/skills/vendor/category/my-skill/SKILL.md
+```
+
+应找到**直接包含 `<skill-name>/SKILL.md` 子目录的容器目录**，本例为：
+
+```text
+./skills/vendor/category
+```
+
+然后将它加入 `plugins/felix-skills/.claude-plugin/plugin.json`：
+
+```json
+{
+  "skills": [
+    "./skills/mattpocock/engineering",
+    "./skills/mattpocock/productivity",
+    "./skills/vendor/category"
+  ]
+}
+```
+
+维护时注意：
+
+- `skills` 字段会**追加**到默认 `skills/` 扫描，不会替换默认目录。
+- 路径相对于插件根目录，使用 `./` 开头，且必须位于插件目录内。
+- 注册直接包含 skill 子目录的精确容器；不要依赖客户端无限递归扫描。
+- 新增普通 skill root 通常只需修改插件的 `plugin.json`，无需修改 marketplace 根目录的 `.claude-plugin/marketplace.json`。
+- 远程发布时同步更新插件版本，并检查 `SKILL.md` frontmatter、sidecar、本地链接和辅助资源。
+- 跨 Claude Code/Codex 使用的 skill 按项目约定提供 `agents/openai.yaml`；Claude-only skill 则记录其平台限制。
+
+## Deprecated 规则
+
+`deprecated` 只是本项目的目录约定，不是 Claude Code、Codex 或第三方扫描器通用的保留名称。
+
+为了避免弃用 skill 被插件发现：
+
+- 不要将 `./skills/deprecated` 加入 `plugin.json` 的 `skills` 数组。
+- 不要注册会把 `deprecated/` 间接纳入扫描范围的过宽父目录。
+- 不要通过通配或递归复制工具全量安装仓库中的 skills。
+- 弃用一个 skill 时，将它移入 `skills/deprecated/`，并从活动 manifest、安装说明和兼容性元数据中移除。
+
+当前 Claude Code plugin 不会发现该目录，是因为默认布局只把 `skills/<skill-name>/SKILL.md` 视为顶层 skill，而 manifest 只额外注册了两个 Matt Pocock 活动集合；并不是因为客户端识别了 `deprecated` 这个名称。
+
+如果未来需要让所有通用 Agent Skills 扫描器都绝对无法看到弃用内容，应将归档移出标准 `skills/` 树。
 
 ## 仓库结构
 
@@ -75,19 +187,32 @@ npx skills@latest add fcdtc/felix-plugins \
 ├── plugins/felix-skills/
 │   ├── .claude-plugin/plugin.json
 │   ├── compatibility.json
-│   └── skills/<skill-name>/
-│       ├── SKILL.md
-│       └── agents/openai.yaml   # Codex sidecar；Claude-only skill 无此文件
+│   └── skills/
+│       ├── <skill-name>/
+│       │   ├── SKILL.md
+│       │   └── agents/openai.yaml
+│       ├── mattpocock/
+│       │   ├── engineering/<skill-name>/
+│       │   └── productivity/<skill-name>/
+│       └── deprecated/<skill-name>/
 └── scripts/validate-skills.py
 ```
 
-`SKILL.md` 是唯一的行为正文。`agents/openai.yaml` 只描述 Codex 的展示信息和调用策略，不复制工作流。
+`SKILL.md` 是每个 skill 的主入口和行为契约。脚本、引用和资源可以放在同一 skill 目录的 `scripts/`、`references/`、`assets/` 等辅助目录中。`agents/openai.yaml` 提供 Codex/OpenAI 的展示、调用策略和依赖元数据，不复制主工作流。
 
 ## 开发验证
 
+修改 plugin、skill、平台 sidecar 或安装说明后，至少运行：
+
 ```bash
+claude plugin validate ./plugins/felix-skills
 python3 scripts/validate-skills.py
-python3 -m unittest plugins/felix-skills/skills/ticket-loop/tests/test_ticket_loop.py
 ```
 
-验证器检查 marketplace/plugin、兼容矩阵、frontmatter、Codex sidecar、平台路径边界、文档链接和共享 `AGENTS.md` 入口。
+然后通过本地 marketplace 安装或重新加载插件，在 Claude Code 和 Codex 的实际 `/skills` 列表中确认：
+
+- 顶层活动 skills 可见；
+- manifest 显式注册的嵌套 skills 可见；
+- `deprecated/` 下的 skills 不可见。
+
+当前 `scripts/validate-skills.py` 只扫描一级 `skills/*/SKILL.md`，`compatibility.json` 也尚未覆盖新的嵌套集合，因此它们暂时不能作为完整 skill inventory 的唯一事实来源。嵌套发现范围以 `plugin.json`、插件校验结果和客户端实际列表为准。
