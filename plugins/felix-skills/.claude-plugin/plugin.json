@@ -4,6 +4,7 @@
 	"version": "0.1.16",
 	"skills": [
 		"./skills/mattpocock/engineering",
-		"./skills/mattpocock/productivity"
+		"./skills/mattpocock/productivity",
+		"./skills/pstack"
 	]
 }

@@ -89,9 +89,10 @@ Codex IDE 扩展不使用 plugin marketplace 时，可以把所需 skill 安装�
    ```text
    plugins/felix-skills/skills/mattpocock/engineering/<skill-name>/SKILL.md
    plugins/felix-skills/skills/mattpocock/productivity/<skill-name>/SKILL.md
+   plugins/felix-skills/skills/pstack/<skill-name>/SKILL.md
    ```
 
-   这两个集合由 [`plugins/felix-skills/.claude-plugin/plugin.json`](plugins/felix-skills/.claude-plugin/plugin.json) 的 `skills` 字段显式注册。集合内的说明见：
+   这三个集合由 [`plugins/felix-skills/.claude-plugin/plugin.json`](plugins/felix-skills/.claude-plugin/plugin.json) 的 `skills` 字段显式注册。集合内的说明见：
 
    - [Engineering skills](plugins/felix-skills/skills/mattpocock/engineering/README.md)
    - [Productivity skills](plugins/felix-skills/skills/mattpocock/productivity/README.md)
@@ -149,6 +150,7 @@ plugins/felix-skills/skills/vendor/category/my-skill/SKILL.md
   "skills": [
     "./skills/mattpocock/engineering",
     "./skills/mattpocock/productivity",
+    "./skills/pstack",
     "./skills/vendor/category"
   ]
 }
@@ -194,6 +196,7 @@ plugins/felix-skills/skills/vendor/category/my-skill/SKILL.md
 │       ├── mattpocock/
 │       │   ├── engineering/<skill-name>/
 │       │   └── productivity/<skill-name>/
+│       ├── pstack/<skill-name>/
 │       └── deprecated/<skill-name>/
 └── scripts/validate-skills.py
 ```
@@ -215,4 +218,4 @@ python3 scripts/validate-skills.py
 - manifest 显式注册的嵌套 skills 可见；
 - `deprecated/` 下的 skills 不可见。
 
-当前 `scripts/validate-skills.py` 只扫描一级 `skills/*/SKILL.md`，`compatibility.json` 也尚未覆盖新的嵌套集合，因此它们暂时不能作为完整 skill inventory 的唯一事实来源。嵌套发现范围以 `plugin.json`、插件校验结果和客户端实际列表为准。
+`scripts/validate-skills.py` 会组合默认顶层目录与 `plugin.json` 显式注册的容器，校验完整活动 skill inventory、名称唯一性、兼容性契约及 Codex sidecar。

@@ -1,0 +1,5 @@
+interface:
+  display_name: "Pstack Teach"
+  short_description: "Teach how and why a body of work operates"
+policy:
+  allow_implicit_invocation: false

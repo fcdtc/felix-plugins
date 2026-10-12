@@ -58,33 +58,77 @@ def parse_frontmatter(path: Path) -> dict[str, str]:
     return values
 
 
-def parse_openai_sidecar(path: Path) -> tuple[str, str, bool]:
+def parse_openai_sidecar(path: Path) -> tuple[str, str, bool | None]:
     text = path.read_text(encoding="utf-8")
     match = re.fullmatch(
         r'interface:\n'
         r'  display_name: "([^"\n]+)"\n'
         r'  short_description: "([^"\n]+)"\n'
-        r'policy:\n'
-        r'  allow_implicit_invocation: (true|false)\n?',
+        r'(?:policy:\n'
+        r'  allow_implicit_invocation: (true|false)\n?)?',
         text,
     )
     if not match:
         raise ValidationError(
             f"invalid Codex sidecar structure: {display_path(path)}"
         )
-    return match.group(1), match.group(2), match.group(3) == "true"
+    implicit = None if match.group(3) is None else match.group(3) == "true"
+    return match.group(1), match.group(2), implicit
+
+
+def discover_skill_dirs(plugin: dict) -> tuple[list[Path], list[str]]:
+    errors: list[str] = []
+    roots = [SKILLS_ROOT]
+    configured_roots = plugin.get("skills", [])
+    if not isinstance(configured_roots, list) or not all(
+        isinstance(root, str) for root in configured_roots
+    ):
+        return [], ["plugin skills must be a string list"]
+
+    for raw_root in configured_roots:
+        root = (PLUGIN_ROOT / raw_root).resolve()
+        try:
+            root.relative_to(PLUGIN_ROOT.resolve())
+        except ValueError:
+            errors.append(f"plugin skill root escapes plugin directory: {raw_root}")
+            continue
+        if not root.is_dir():
+            errors.append(f"plugin skill root is not a directory: {raw_root}")
+            continue
+        roots.append(root)
+
+    skill_dirs: list[Path] = []
+    seen: set[Path] = set()
+    for root in roots:
+        for skill_file in sorted(root.glob("*/SKILL.md")):
+            skill_dir = skill_file.parent.resolve()
+            if skill_dir not in seen:
+                seen.add(skill_dir)
+                skill_dirs.append(skill_dir)
+    return sorted(skill_dirs), errors
 
 
 def validate_markdown_links(path: Path) -> list[str]:
     errors: list[str] = []
     text = path.read_text(encoding="utf-8")
-    for raw_target in re.findall(r"\[[^\]]*\]\(([^)]+)\)", text):
+    in_fence = False
+    visible_lines: list[str] = []
+    for line in text.splitlines():
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+            continue
+        if not in_fence:
+            visible_lines.append(line)
+
+    for raw_target in re.findall(r"\[[^\]]*\]\(([^)]+)\)", "\n".join(visible_lines)):
         if raw_target.startswith("<") and raw_target.endswith(">"):
             raw_target = raw_target[1:-1]
         parsed = urlsplit(raw_target)
         if parsed.scheme or parsed.netloc or not parsed.path:
             continue
         decoded = unquote(parsed.path)
+        if decoded in {"link", "url"}:
+            continue
         if not (path.parent / decoded).exists():
             errors.append(
                 f"broken local link in {display_path(path)}: {raw_target}"
@@ -120,8 +164,17 @@ def validate() -> list[str]:
             elif not (resolved_source / ".claude-plugin" / "plugin.json").is_file():
                 errors.append("marketplace plugin source is missing plugin.json")
 
-    skill_dirs = sorted(path.parent for path in SKILLS_ROOT.glob("*/SKILL.md"))
-    actual_names = {path.name for path in skill_dirs}
+    skill_dirs, discovery_errors = discover_skill_dirs(plugin)
+    errors.extend(discovery_errors)
+    actual_names: set[str] = set()
+    duplicate_directory_names: set[str] = set()
+    for skill_dir in skill_dirs:
+        if skill_dir.name in actual_names:
+            duplicate_directory_names.add(skill_dir.name)
+        actual_names.add(skill_dir.name)
+    for name in sorted(duplicate_directory_names):
+        errors.append(f"duplicate skill directory name: {name}")
+
     configured = compatibility.get("skills", {})
     if not isinstance(configured, dict):
         return ["compatibility manifest 'skills' must be an object"]
@@ -147,8 +200,9 @@ def validate() -> list[str]:
         if name in frontmatter_names:
             errors.append(f"duplicate skill name: {name}")
         frontmatter_names.add(name)
-        if frontmatter.get("disable-model-invocation") != "true":
-            errors.append(f"skill must require explicit invocation: {name}")
+        invocation = frontmatter.get("disable-model-invocation")
+        if invocation not in {None, "true"}:
+            errors.append(f"invalid disable-model-invocation value: {name}")
 
         contract = configured.get(name, {})
         if not isinstance(contract, dict):
@@ -165,15 +219,6 @@ def validate() -> list[str]:
                 errors.append(f"skill cannot depend on itself: {name}")
             elif dependency not in actual_names:
                 errors.append(f"unknown skill dependency for {name}: {dependency}")
-        expected_dependencies = ["note"] if name in {
-            "note-import", "note-lint", "note-polish", "note-query"
-        } else []
-        if dependencies != expected_dependencies:
-            errors.append(
-                f"unexpected skill dependencies for {name}: "
-                f"expected={expected_dependencies}, actual={dependencies}"
-            )
-
         support = contract.get("support")
         sidecar = skill_dir / "agents" / "openai.yaml"
         if support == CROSS_PLATFORM:
@@ -187,8 +232,11 @@ def validate() -> list[str]:
                     display_names.add(display)
                     if not short.strip():
                         errors.append(f"empty Codex short description: {name}")
-                    if implicit:
+                    explicit = frontmatter.get("disable-model-invocation") == "true"
+                    if explicit and implicit is not False:
                         errors.append(f"Codex implicit invocation must be disabled: {name}")
+                    if not explicit and implicit is False:
+                        errors.append(f"Codex implicit invocation must be enabled: {name}")
                 except ValidationError as exc:
                     errors.append(str(exc))
 
@@ -223,10 +271,11 @@ def validate() -> list[str]:
 
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     for required in (
-        "/plugin marketplace add fcdtc/felix-plugins",
-        "npx skills@latest add fcdtc/felix-plugins",
-        "ticket-loop",
-        "Claude Code only",
+        "claude plugin marketplace add fcdtc/felix-plugins",
+        "codex plugin marketplace add fcdtc/felix-plugins",
+        "./skills/pstack",
+        "Claude Code",
+        "Codex",
     ):
         if required not in readme:
             errors.append(f"README is missing required compatibility text: {required}")

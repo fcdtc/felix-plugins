@@ -1,27 +1,44 @@
 {
   "schema_version": 1,
   "skills": {
-    "adhd": {"support": "claude-and-codex"},
+    "ask-matt": {"support": "claude-and-codex"},
+    "code-review": {"support": "claude-and-codex"},
+    "codebase-design": {"support": "claude-and-codex"},
     "codebase-query": {"support": "claude-and-codex"},
     "codebase-tutor": {"support": "claude-and-codex"},
-    "deepinit": {"support": "claude-and-codex"},
+    "create-verification-skill": {"support": "claude-and-codex"},
+    "diagnosing-bugs": {"support": "claude-and-codex"},
+    "domain-modeling": {"support": "claude-and-codex"},
+    "eli5": {"support": "claude-and-codex"},
     "go-service-structure": {"support": "claude-and-codex"},
+    "grill-me": {"support": "claude-and-codex"},
+    "grill-with-docs": {"support": "claude-and-codex"},
+    "grilling": {"support": "claude-and-codex"},
+    "handoff": {"support": "claude-and-codex"},
+    "how": {"support": "claude-and-codex"},
     "html-ppt": {"support": "claude-and-codex"},
+    "implement": {"support": "claude-and-codex"},
+    "implement-spec": {"support": "claude-and-codex"},
+    "improve-codebase-architecture": {"support": "claude-and-codex"},
+    "maintain-verification-skill": {"support": "claude-and-codex"},
     "note": {"support": "claude-and-codex"},
     "note-import": {"support": "claude-and-codex", "requires": ["note"]},
     "note-lint": {"support": "claude-and-codex", "requires": ["note"]},
     "note-polish": {"support": "claude-and-codex", "requires": ["note"]},
     "note-query": {"support": "claude-and-codex", "requires": ["note"]},
+    "pr": {"support": "claude-and-codex"},
     "prompt-builder": {"support": "claude-and-codex"},
-    "ticket-loop": {
-      "support": "claude-only",
-      "limitations": [
-        "Claude Code plugin discovery",
-        "Claude CLI Task Sessions and resume",
-        "Claude Code unattended permission mode",
-        "Claude CLI JSON cost reporting"
-      ]
-    },
+    "prototype": {"support": "claude-and-codex"},
+    "pstack-teach": {"support": "claude-and-codex", "requires": ["how", "why"]},
+    "research": {"support": "claude-and-codex"},
+    "retro": {"support": "claude-and-codex"},
+    "setup-matt-pocock-skills": {"support": "claude-and-codex"},
+    "tdd": {"support": "claude-and-codex"},
+    "teach": {"support": "claude-and-codex"},
+    "to-questionnaire": {"support": "claude-and-codex"},
+    "to-spec": {"support": "claude-and-codex"},
+    "to-tickets": {"support": "claude-and-codex"},
+    "triage": {"support": "claude-and-codex"},
     "video-summary": {
       "support": "claude-and-codex",
       "environment_requirements": [
@@ -29,6 +46,11 @@
         "ffmpeg and ffprobe for ASR fallback",
         "network access for subtitles, media, and models"
       ]
-    }
+    },
+    "wait-what": {"support": "claude-and-codex"},
+    "wayfinder": {"support": "claude-and-codex"},
+    "why": {"support": "claude-and-codex"},
+    "wizard": {"support": "claude-and-codex"},
+    "writing-for-agents": {"support": "claude-and-codex"}
   }
 }
