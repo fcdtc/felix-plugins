@@ -47,9 +47,10 @@ python3 <SKILL_DIR>/scripts/launcher.py setup [en|zh|all]   # 默认 all
 
 1. 执行平台 reference 指定的字幕或 ASR 脚本。
 2. 只接受**当前命令**输出的 `RESULT_JSON`；普通视频结果必须有 `"ok": true`。`ASR_ERROR_JSON` 是失败终态：报告其中的质量问题，不使用目录里的旧文件继续总结。
-3. 从 `RESULT_JSON.chunks` 生成中文结构化总结，覆盖关键技术细节、数据和逻辑，再合并去重；多个 chunk 彼此独立时优先使用当前平台可用的并行任务能力，不支持委派时顺序处理。
-4. 用最终正文覆盖 `deliverables.summary` 的占位内容，保留一级标题。
-5. 运行最终交付校验：
+3. 启动一个**全新、独立上下文的总结 subagent**（非 fork、非当前 agent 的 continuation），只向它提供以下内容：视频标题、`deliverables.verbatim`、`RESULT_JSON.chunks`、`deliverables.summary` 的绝对路径，以及本步骤的总结要求。主 agent 不读取逐字稿或 chunk 正文，也不亲自生成总结。
+4. 总结 subagent 必须读取 `deliverables.verbatim` 的全部内容；超出单次上下文容量时，按 `RESULT_JSON.chunks` 逐块覆盖后再合并去重。它生成中文结构化总结，覆盖关键技术细节、数据、论证链路和结论，用最终正文覆盖 `deliverables.summary` 的占位内容，并保留一级标题。完成标准是逐字稿全部内容均已纳入处理且总结文件已写入。
+5. 当前平台无法创建独立 subagent 时，停止并报告该能力缺失；不得在主 agent 上下文中降级生成总结。
+6. 运行最终交付校验：
 
 ```bash
 python3 <SKILL_DIR>/scripts/launcher.py validate-delivery \
@@ -57,9 +58,9 @@ python3 <SKILL_DIR>/scripts/launcher.py validate-delivery \
   --summary "<deliverables.summary>"
 ```
 
-6. 只有命令退出码为 0 且输出 `DELIVERY_JSON` 中 `"ok": true`，才向用户交付两份文件路径；否则修复总结或报告阻塞，不宣布完成。
+7. 只有命令退出码为 0 且输出 `DELIVERY_JSON` 中 `"ok": true`，才向用户交付两份文件路径；否则让总结 subagent 修复总结或报告阻塞，不宣布完成。
 
-`chunks`、`asr_transcript.json` 和 `asr_quality.json` 是内部诊断产物，不是交付物。输出目录位于运行脚本时的 cwd，以净化并截断后的视频标题命名；脚本一律使用 `<SKILL_DIR>` 下的绝对路径执行。
+`chunks`、`asr_transcript.json` 和 `asr_quality.json` 是内部诊断产物，不是交付物。输出目录位于运行脚本时的 cwd，目录名按以下优先级确定：**净化并截断后的视频标题 → 视频 ID**；仅当脚本无法取得非空标题时才使用 ID。脚本一律使用 `<SKILL_DIR>` 下的绝对路径执行。
 
 ## 资源
 
