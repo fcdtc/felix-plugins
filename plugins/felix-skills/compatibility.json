@@ -33,6 +33,7 @@
     "research": {"support": "claude-and-codex"},
     "retro": {"support": "claude-and-codex"},
     "setup-matt-pocock-skills": {"support": "claude-and-codex"},
+    "show-me": {"support": "claude-and-codex"},
     "tdd": {"support": "claude-and-codex"},
     "teach": {"support": "claude-and-codex"},
     "to-questionnaire": {"support": "claude-and-codex"},
