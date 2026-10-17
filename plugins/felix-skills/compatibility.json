@@ -2,6 +2,7 @@
   "schema_version": 1,
   "skills": {
     "ask-matt": {"support": "claude-and-codex"},
+    "bro": {"support": "claude-and-codex"},
     "code-review": {"support": "claude-and-codex"},
     "codebase-design": {"support": "claude-and-codex"},
     "codebase-query": {"support": "claude-and-codex"},

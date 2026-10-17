@@ -1,0 +1,5 @@
+interface:
+  display_name: "Bro"
+  short_description: "用简洁自然的人话重述上一条回复，让表达更容易理解，去掉术语和行话"
+policy:
+  allow_implicit_invocation: false
