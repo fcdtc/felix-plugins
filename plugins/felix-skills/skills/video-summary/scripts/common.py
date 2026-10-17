@@ -482,13 +482,13 @@ def transcribe(audio_path, lang):
         return transcript
 
 
-def render_transcript_text(transcript):
+def render_transcript_text(transcript, timestamp_offset_seconds=0):
     """把通过门禁的结构化结果渲染为带时间戳的纯文本。"""
     if not transcript.get('quality', {}).get('ok'):
         raise ASRQualityError(transcript.get('quality', {'ok': False, 'violations': []}))
     lines = []
     for segment in transcript['segments']:
-        seconds = max(0, int(round(segment['start'])))
+        seconds = max(0, int(round(segment['start'] + timestamp_offset_seconds)))
         hours, remainder = divmod(seconds, 3600)
         minutes, seconds = divmod(remainder, 60)
         text = segment.get('text', '').strip()
@@ -497,13 +497,20 @@ def render_transcript_text(transcript):
     return '\n\n'.join(lines) + '\n'
 
 
-def chunk_and_emit(video_id, title, transcript, lang, out_dir, id_field='video_id'):
+def chunk_and_emit(video_id, title, transcript, lang, out_dir, id_field='video_id',
+                   timestamp_offset_seconds=0, result_fields=None):
     """可回滚地发布通过门禁的 ASR 交付物。"""
     quality = transcript.get('quality', {})
     if not quality.get('ok'):
         raise ASRQualityError(quality)
+    protected = {'schema_version', 'ok', id_field, 'title', 'total_chars', 'source',
+                 'transcript_lang', 'quality', 'deliverables', 'chunks'}
+    extras = result_fields or {}
+    collision = protected.intersection(extras)
+    if collision:
+        raise ValueError('result_fields 不能覆盖稳定字段: ' + ', '.join(sorted(collision)))
     os.makedirs(out_dir, exist_ok=True)
-    full_text = render_transcript_text(transcript)
+    full_text = render_transcript_text(transcript, timestamp_offset_seconds)
     total = len(full_text)
 
     transcript_json = os.path.join(out_dir, 'asr_transcript.json')
@@ -604,6 +611,7 @@ def chunk_and_emit(video_id, title, transcript, lang, out_dir, id_field='video_i
         'deliverables': {'verbatim': verbatim_md, 'summary': summary_md},
         'chunks': chunks,
     }
+    payload.update(extras)
     print(f'[ASR] Success. Total chunks: {len(chunks)}', flush=True)
     print('RESULT_JSON:' + json.dumps(payload, ensure_ascii=False), flush=True)
     return payload

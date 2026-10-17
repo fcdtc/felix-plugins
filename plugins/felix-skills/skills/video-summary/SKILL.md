@@ -1,56 +1,31 @@
 ---
 name: video-summary
-description: 下载视频字幕，生成逐字稿和总结稿 
-disable-model-invocation: true
+description: 下载 Bilibili 或 YouTube 字幕；无字幕时用 ASR 转写，并生成中文总结。用于视频逐字稿、指定时间范围转写与内容总结。
 ---
 
-# 视频字幕下载 + 中文总结（Bilibili / YouTube）
+# 视频逐字稿与总结
 
-统一处理 Bilibili 与 YouTube 视频，按「字幕下载 → ASR 兜底 → 中文总结」流程执行。本 skill 可由 Claude Code 与 Codex 使用。
+先按输入平台阅读对应 reference：
 
-先从当前 `SKILL.md` 所在目录解析绝对路径 `<SKILL_DIR>`。所有公开动作统一通过 `python3 <SKILL_DIR>/scripts/launcher.py <action> ...` 执行；launcher 首次运行时准备专用虚拟环境，后续自动复用，无需手工 activate。ASR 兜底会检查本机兼容性和 `ffmpeg` / `ffprobe` 等外部工具；条件不满足时停止并给出准备步骤。
+- Bilibili：`references/bilibili.md`
+- YouTube：`references/youtube.md`
 
-## 第零步：平台识别（路由）
-
-| 用户输入特征 | 平台 | 详细文档 |
-|---|---|---|
-| `bilibili.com`、BV 号、`ss`/`ep` 开头 | Bilibili | `references/bilibili.md` |
-| `youtube.com`、`youtu.be`、`shorts/`、裸 11 位 ID | YouTube | `references/youtube.md` |
-
-识别后**阅读对应 reference 文档**再执行，本文只描述两边共享的流程与约定。
-
-## 初始化 ASR（可选）
-
-只有字幕不可用、需要 ASR 兜底时才需预热模型：
+所有动作统一通过：
 
 ```bash
-python3 <SKILL_DIR>/scripts/launcher.py setup [en|zh|all]   # 默认 all
+python3 <SKILL_DIR>/scripts/launcher.py <action> ...
 ```
 
-模型下载和长视频转写可能超过单条命令超时；使用当前环境的后台任务与状态监控能力，同时监控成功和失败终态。
+launcher 在 macOS Apple Silicon 上管理专用 CPython 3.12 环境。YouTube 还需要 Deno；ASR 需要 `ffmpeg`、`ffprobe`。
 
-## 总体流程（两级降级）
+## 流程
 
-```
-拉取官方字幕 ──成功──▶ 分块 + 总结
-       │
-       失败（视频无 CC 字幕 / 无 AI 字幕）
-       ▼
-下载音频 → mlx-whisper ASR 转写 → 分块 + 总结
-```
-
-具体命令见各平台 reference 文档。
-
-## 交付流程（两边统一）
-
-每个视频最终交付**两份 Markdown 文档**：`逐字稿.md` 和中文 `总结稿.md`。
-
-1. 执行平台 reference 指定的字幕或 ASR 脚本。
-2. 只接受**当前命令**输出的 `RESULT_JSON`；普通视频结果必须有 `"ok": true`。`ASR_ERROR_JSON` 是失败终态：报告其中的质量问题，不使用目录里的旧文件继续总结。
-3. 启动一个**全新、独立上下文的总结 subagent**（非 fork、非当前 agent 的 continuation），只向它提供以下内容：视频标题、`deliverables.verbatim`、`RESULT_JSON.chunks`、`deliverables.summary` 的绝对路径，以及本步骤的总结要求。主 agent 不读取逐字稿或 chunk 正文，也不亲自生成总结。
-4. 总结 subagent 必须读取 `deliverables.verbatim` 的全部内容；超出单次上下文容量时，按 `RESULT_JSON.chunks` 逐块覆盖后再合并去重。它生成中文结构化总结，覆盖关键技术细节、数据、论证链路和结论，用最终正文覆盖 `deliverables.summary` 的占位内容，并保留一级标题。完成标准是逐字稿全部内容均已纳入处理且总结文件已写入。
-5. 当前平台无法创建独立 subagent 时，停止并报告该能力缺失；不得在主 agent 上下文中降级生成总结。
-6. 运行最终交付校验：
+1. 下载原语言字幕。
+2. 无可用字幕时下载音频并执行 ASR。
+3. 只接受当前命令输出且 `ok: true` 的 `RESULT_JSON`。`ERROR_JSON` 或 `ASR_ERROR_JSON` 是失败终态，不使用旧文件继续。
+4. 启动全新独立总结 subagent，仅提供视频标题、`deliverables.verbatim`、`chunks`、`deliverables.summary` 绝对路径和总结要求。
+5. subagent 必须覆盖逐字稿全文，生成中文结构化总结，并覆盖 summary 占位内容、保留一级标题。主 agent 不读取逐字稿或 chunk 正文，也不代写总结。
+6. 运行：
 
 ```bash
 python3 <SKILL_DIR>/scripts/launcher.py validate-delivery \
@@ -58,13 +33,12 @@ python3 <SKILL_DIR>/scripts/launcher.py validate-delivery \
   --summary "<deliverables.summary>"
 ```
 
-7. 只有命令退出码为 0 且输出 `DELIVERY_JSON` 中 `"ok": true`，才向用户交付两份文件路径；否则让总结 subagent 修复总结或报告阻塞，不宣布完成。
+只有 `DELIVERY_JSON.ok` 为 `true` 才交付 `逐字稿.md` 和 `总结稿.md`。平台无法创建独立 subagent 时停止，不在主上下文降级总结。
 
-`chunks`、`asr_transcript.json` 和 `asr_quality.json` 是内部诊断产物，不是交付物。输出目录位于运行脚本时的 cwd，目录名按以下优先级确定：**净化并截断后的视频标题 → 视频 ID**；仅当脚本无法取得非空标题时才使用 ID。脚本一律使用 `<SKILL_DIR>` 下的绝对路径执行。
+## ASR 模型预热（可选）
 
-## 资源
+```bash
+python3 <SKILL_DIR>/scripts/launcher.py setup [en|zh|all]
+```
 
-- **公开入口**: `scripts/launcher.py` — 专用虚拟环境初始化、动作路由和后续复用。
-- **公共脚本**: `scripts/common.py` — 运行时验证、ASR 转写、质量门禁和交付输出。
-- **模型初始化**: `scripts/setup_whisper.py` — 在专用环境内检查并预热模型。
-- Bilibili / YouTube 平台脚本见各自 reference 文档。
+模型下载或长视频转写应在后台运行，并监控成功与失败终态。

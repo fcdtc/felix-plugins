@@ -2,4 +2,5 @@ requests==2.32.5
 bilibili-api-python==17.4.1
 aiohttp==3.13.5
 qrcode[pil]==8.2
+mlx-whisper==0.4.3
 yt-dlp[default]>=2026.8.19,<2027

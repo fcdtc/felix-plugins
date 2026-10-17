@@ -149,6 +149,23 @@ class WhisperContractTests(unittest.TestCase):
         self.assertEqual(kwargs['temperature'], (0.0, 0.2, 0.4, 0.6, 0.8, 1.0))
         self.assertEqual(kwargs['path_or_hf_repo'], '/model')
 
+    def test_render_transcript_applies_display_offset_only(self):
+        data = transcript([segment('偏移后的内容', 1, 2)], 10)
+        data['quality'] = {'ok': True, 'policy_version': 1, 'violations': []}
+        rendered = common.render_transcript_text(data, timestamp_offset_seconds=60)
+        self.assertIn('[00:01:01]', rendered)
+        self.assertEqual(data['segments'][0]['start'], 1)
+
+    def test_result_fields_cannot_override_delivery_contract(self):
+        with tempfile.TemporaryDirectory() as directory:
+            data = transcript([segment('一段足够正常的内容', 0, 10)], 10)
+            data.update({'quality': {'ok': True, 'policy_version': 1, 'violations': []},
+                         'repair_rounds': 0})
+            with self.assertRaises(ValueError):
+                common.chunk_and_emit('id', '标题', data, 'zh', directory,
+                                      result_fields={'ok': False})
+            self.assertEqual(list(Path(directory).iterdir()), [])
+
     def test_failed_quality_does_not_emit_result_or_files(self):
         bad = {'text': '坏结果', 'segments': [segment('这是足够长的重复句子', 0, 1)] * 4,
                'quality': {'ok': False, 'policy_version': 1, 'violations': []},

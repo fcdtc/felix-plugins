@@ -1,15 +1,13 @@
 #!/usr/bin/env python3
-"""video-summary 的统一入口：创建并复用专用虚拟环境。"""
+"""video-summary 统一入口：选择 CPython 3.12 并复用专用虚拟环境。"""
 import fcntl
 import hashlib
 import json
 import os
-import platform
 import shutil
 import subprocess
 import sys
 import tempfile
-import venv
 from pathlib import Path
 
 SKILL_DIR = Path(__file__).resolve().parent.parent
@@ -23,8 +21,9 @@ ACTIONS = {
     'youtube-asr': 'youtube_asr_fallback.py',
     'validate-delivery': 'validate_delivery.py',
 }
-DIRECT_IMPORTS = ('requests', 'bilibili_api', 'aiohttp', 'qrcode', 'yt_dlp', 'mlx_whisper')
-SCHEMA_VERSION = 1
+DIRECT_IMPORTS = ('requests', 'bilibili_api', 'aiohttp', 'qrcode', 'yt_dlp', 'yt_dlp_ejs',
+                  'mlx_whisper')
+SCHEMA_VERSION = 2
 
 
 def cache_root(env=None):
@@ -33,24 +32,66 @@ def cache_root(env=None):
     return Path(base).expanduser() / 'felix-skills' / 'video-summary'
 
 
-def runtime_identity(requirements=REQUIREMENTS):
-    digest = hashlib.sha256(requirements.read_bytes())
-    fields = [platform.python_implementation(), platform.python_version(),
-              sys.implementation.cache_tag or '', sys.platform, platform.machine()]
-    digest.update('\0'.join(fields).encode())
-    return digest.hexdigest()[:20], fields
-
-
-def venv_python(path):
-    return Path(path) / ('Scripts/python.exe' if os.name == 'nt' else 'bin/python')
-
-
 def clean_python_env():
     env = os.environ.copy()
     env.pop('PYTHONPATH', None)
     env.pop('PYTHONHOME', None)
     env['PYTHONNOUSERSITE'] = '1'
     return env
+
+
+def probe_runtime(executable):
+    code = ('import json,platform,sys; print(json.dumps({'
+            '"implementation":platform.python_implementation(),'
+            '"version":list(sys.version_info[:3]),"cache_tag":sys.implementation.cache_tag or "",'
+            '"platform":sys.platform,"machine":platform.machine()}))')
+    try:
+        result = subprocess.run([str(executable), '-I', '-c', code], capture_output=True,
+                                text=True, env=clean_python_env(), timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    try:
+        payload = json.loads(result.stdout.strip())
+    except ValueError:
+        return None
+    version = tuple(payload.get('version', ()))
+    if payload.get('implementation') != 'CPython' or version[:2] != (3, 12) \
+            or payload.get('platform') != 'darwin' or payload.get('machine') != 'arm64':
+        return None
+    return {'executable': str(Path(executable).resolve()), 'implementation': 'CPython',
+            'version': version, 'cache_tag': payload['cache_tag'],
+            'platform': payload['platform'], 'machine': payload['machine']}
+
+
+def select_runtime(env=None):
+    env = os.environ if env is None else env
+    configured = env.get('VIDEO_SUMMARY_PYTHON', '').strip()
+    candidates = [configured] if configured else [
+        sys.executable, shutil.which('python3.12'),
+        '/opt/homebrew/bin/python3.12', '/usr/local/bin/python3.12']
+    for candidate in candidates:
+        if candidate and Path(candidate).is_file():
+            runtime = probe_runtime(candidate)
+            if runtime:
+                return runtime
+    raise SystemExit('video-summary 需要 macOS Apple Silicon 上的 CPython 3.12。请安装 '
+                     'python@3.12，或设置 VIDEO_SUMMARY_PYTHON=/path/to/python3.12')
+
+
+def runtime_identity(requirements=REQUIREMENTS, runtime=None):
+    runtime = runtime or select_runtime()
+    digest = hashlib.sha256(requirements.read_bytes())
+    fields = [runtime['implementation'], '.'.join(map(str, runtime['version'])),
+              runtime['cache_tag'], runtime['platform'], runtime['machine']]
+    digest.update('\0'.join(fields).encode())
+    digest.update(str(SCHEMA_VERSION).encode())
+    return digest.hexdigest()[:20], fields
+
+
+def venv_python(path):
+    return Path(path) / ('Scripts/python.exe' if os.name == 'nt' else 'bin/python')
 
 
 def environment_smoke(python):
@@ -88,11 +129,11 @@ def run_checked(args, **kwargs):
     subprocess.run([str(item) for item in args], check=True, **kwargs)
 
 
-def build_environment(stage, runtime_hash, fields):
+def build_environment(stage, runtime_hash, fields, runtime):
     print(f'[env] 首次创建 video-summary 专用环境: {stage}', flush=True)
-    venv.EnvBuilder(with_pip=True, system_site_packages=False).create(stage)
-    python = venv_python(stage)
     env = clean_python_env()
+    run_checked([runtime['executable'], '-I', '-m', 'venv', stage], env=env)
+    python = venv_python(stage)
     run_checked([python, '-I', '-m', 'pip', 'install', '--disable-pip-version-check',
                  '-r', REQUIREMENTS], env=env)
     run_checked([python, '-I', '-m', 'pip', 'check'], env=env)
@@ -106,7 +147,8 @@ def build_environment(stage, runtime_hash, fields):
 
 def ensure_environment(root=None):
     root = cache_root() if root is None else Path(root)
-    runtime_hash, fields = runtime_identity()
+    runtime = select_runtime()
+    runtime_hash, fields = runtime_identity(runtime=runtime)
     final = root / 'venvs' / runtime_hash
     if is_ready(final, runtime_hash):
         return final
@@ -121,7 +163,7 @@ def ensure_environment(root=None):
             raise SystemExit(f'专用环境损坏: {final}。请确认没有任务运行后删除该目录再重试。')
         stage = Path(tempfile.mkdtemp(prefix=f'{runtime_hash}.', dir=root / 'staging'))
         try:
-            build_environment(stage, runtime_hash, fields)
+            build_environment(stage, runtime_hash, fields, runtime)
             os.replace(stage, final)
         except BaseException:
             shutil.rmtree(stage, ignore_errors=True)
@@ -132,6 +174,8 @@ def ensure_environment(root=None):
 def check_external_tools(action):
     required = ['ffmpeg', 'ffprobe', 'curl'] if action in {'setup', 'bilibili-asr', 'youtube-asr'} \
         else ['ffmpeg'] if action == 'youtube-subtitles' else []
+    if action.startswith('youtube-'):
+        required.append('deno')
     missing = [name for name in required if not shutil.which(name)]
     if missing:
         raise SystemExit('缺少外部命令: ' + ', '.join(missing) + '。请先安装后重试。')

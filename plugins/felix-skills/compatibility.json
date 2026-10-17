@@ -47,8 +47,9 @@
     "video-summary": {
       "support": "claude-and-codex",
       "environment_requirements": [
-        "Python 3 with a dedicated venv managed by the skill",
-        "ffmpeg and ffprobe for ASR fallback",
+        "macOS Apple Silicon with CPython 3.12 and a dedicated venv managed by the skill",
+        "Deno for YouTube JavaScript challenges",
+        "ffmpeg and ffprobe for media processing and ASR fallback",
         "network access for subtitles, media, and models"
       ]
     },

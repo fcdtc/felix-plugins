@@ -1,47 +1,36 @@
-# YouTube 处理细节
+# YouTube
 
-公共流程（两级降级、交付产物、总结流程、whisper 初始化）见 SKILL.md，本文只讲 YouTube 特有部分。
-
-## 第一步：解析输入
-
-从用户输入提取 11 位视频 ID：`watch?v=`、`youtu.be/`、`shorts/`、`embed/` 后的串，或裸 ID。
-
-播放列表链接：只取其中单个视频，向用户确认处理哪一个（或全部逐个处理）。
-
-## 第二步：下载字幕（主路径）
+## 字幕优先
 
 ```bash
-python3 <SKILL_DIR>/scripts/launcher.py youtube-subtitles <URL或ID>
+python3 <SKILL_DIR>/scripts/launcher.py youtube-subtitles <URL或ID> \
+  [--start-seconds N] [--end-seconds N]
 ```
 
-- 字幕语言优先级：人工字幕（中文 > 英文）> 原语言自动字幕。**绝不用 YouTube 机翻字幕**（英文视频的机器生成中文字幕属于此类）——脚本会自动识别并跳过。
-- 成功标准：当前命令 stdout 出现 `RESULT_JSON:{...}`，且其中 `"ok": true`。
-- 失败（无字幕 / 地区受限）：脚本打印 `ERROR: 没找到字幕`，进入第三步。
+人工字幕按中文、英文优先；自动字幕只使用可确认的原语言轨，不使用机翻。失败终态 `no_usable_subtitle` 时进入 ASR。
 
-## 第三步：ASR 兜底（仅当上一步失败）
+## ASR 兜底
 
 ```bash
-python3 <SKILL_DIR>/scripts/launcher.py youtube-asr <URL或ID> [en|zh]
+python3 <SKILL_DIR>/scripts/launcher.py youtube-asr <URL或ID> [en|zh] \
+  [--start-seconds N] [--end-seconds N]
 ```
 
-语言选择规则：
-- **默认 `en`**：YouTube 内容以英文为主，whisper 英文识别最准。判断不准时直接用 en。
-- 传 `zh`：仅当用户明确说视频是中文且无字幕。
+语言按视频原声选择；不确定时 YouTube 默认 `en`，中文视频用 `zh`。范围参数以秒计，例如前 7 分 20 秒为 `--end-seconds 440`。
 
-脚本会分段转写并执行质量门禁。成功标准同上；若输出 `ASR_ERROR_JSON`，停止并报告失败区间，不使用目录里的旧逐字稿继续总结。
+## 下载策略
 
-## 产物位置
+- 运行时：macOS Apple Silicon、专用 CPython 3.12、锁定版 `yt-dlp[default]`、本地 EJS、Deno。
+- 鉴权：显式设置 `YT_COOKIES_FROM_BROWSER` 时只用该浏览器；否则依次裸请求、Chrome、Safari。
+- 媒体：优先独立音频；仅在格式不可用时回退到含音频的最佳媒体，并提取 M4A。
+- 缓存：按视频 ID 和时间范围复用；复用前由 `ffprobe` 校验。
+- 隔离：忽略用户级 yt-dlp 配置，不启用远程 EJS；下载在临时目录完成，通过校验后原子发布。
 
-目录以**视频标题**命名（净化非法字符并截断 80 字符，拿不到标题时回退视频 ID）：
+内部缓存位于 `yt_temp/.work/<video-id>/<range>/`；交付目录仍按标题命名。
 
-- `yt_temp/<视频标题>/逐字稿.md` — 完整文字稿（原文语言）
-- `yt_temp/<视频标题>/总结稿.md` — 中文总结（由总结流程写入）
+## 故障处理
 
-## 鉴权说明
-
-YouTube 会做 bot 校验。脚本内置自动降级链：裸请求 → Chrome Cookie → Safari Cookie。若全部失败，让用户设置 `YT_COOKIES_FROM_BROWSER=<浏览器名>` 后重试（Safari 受 macOS 沙箱限制可能无权限读取）。
-
-## 脚本
-
-- `scripts/youtube_download_and_chunk.py` — 字幕下载 + 分块（主路径）。
-- `scripts/youtube_asr_fallback.py` — 音频下载、语音转写与质量校验（兜底）。
+- 环境准备失败：安装 CPython 3.12、Deno、ffmpeg/ffprobe 后重试。
+- `metadata_failed`：检查网络、YouTube 登录和浏览器 Cookie 权限。
+- `download_failed`：查看 `ERROR_JSON.error.attempts`；不要使用目录中的旧文件继续。
+- `asr_quality_gate_failed`：报告质量问题，不交付低质量逐字稿。
