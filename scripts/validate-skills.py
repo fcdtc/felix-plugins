@@ -12,6 +12,9 @@ from urllib.parse import unquote, urlsplit
 ROOT = Path(__file__).resolve().parents[1]
 PLUGIN_ROOT = ROOT / "plugins" / "felix-skills"
 SKILLS_ROOT = PLUGIN_ROOT / "skills"
+ARCHIVE_ROOT = PLUGIN_ROOT / "archive" / "deprecated-skills"
+CLAUDE_MANIFEST = PLUGIN_ROOT / ".claude-plugin" / "plugin.json"
+CODEX_MANIFEST = PLUGIN_ROOT / ".codex-plugin" / "plugin.json"
 COMPATIBILITY = PLUGIN_ROOT / "compatibility.json"
 CLAUDE_ONLY = "claude-only"
 CROSS_PLATFORM = "claude-and-codex"
@@ -76,26 +79,32 @@ def parse_openai_sidecar(path: Path) -> tuple[str, str, bool | None]:
     return match.group(1), match.group(2), implicit
 
 
-def discover_skill_dirs(plugin: dict) -> tuple[list[Path], list[str]]:
+def resolve_skill_root(raw_root: str, label: str) -> tuple[Path | None, list[str]]:
+    errors: list[str] = []
+    root = (PLUGIN_ROOT / raw_root).resolve()
+    try:
+        root.relative_to(PLUGIN_ROOT.resolve())
+    except ValueError:
+        return None, [f"{label} skill root escapes plugin directory: {raw_root}"]
+    if not root.is_dir():
+        errors.append(f"{label} skill root is not a directory: {raw_root}")
+    return root, errors
+
+
+def discover_claude_skill_dirs(plugin: dict) -> tuple[list[Path], list[str]]:
     errors: list[str] = []
     roots = [SKILLS_ROOT]
     configured_roots = plugin.get("skills", [])
     if not isinstance(configured_roots, list) or not all(
         isinstance(root, str) for root in configured_roots
     ):
-        return [], ["plugin skills must be a string list"]
+        return [], ["Claude plugin skills must be a string list"]
 
     for raw_root in configured_roots:
-        root = (PLUGIN_ROOT / raw_root).resolve()
-        try:
-            root.relative_to(PLUGIN_ROOT.resolve())
-        except ValueError:
-            errors.append(f"plugin skill root escapes plugin directory: {raw_root}")
-            continue
-        if not root.is_dir():
-            errors.append(f"plugin skill root is not a directory: {raw_root}")
-            continue
-        roots.append(root)
+        root, root_errors = resolve_skill_root(raw_root, "Claude plugin")
+        errors.extend(root_errors)
+        if root is not None and root.is_dir():
+            roots.append(root)
 
     skill_dirs: list[Path] = []
     seen: set[Path] = set()
@@ -106,6 +115,19 @@ def discover_skill_dirs(plugin: dict) -> tuple[list[Path], list[str]]:
                 seen.add(skill_dir)
                 skill_dirs.append(skill_dir)
     return sorted(skill_dirs), errors
+
+
+def discover_codex_skill_dirs(plugin: dict) -> tuple[list[Path], list[str]]:
+    raw_root = plugin.get("skills")
+    if not isinstance(raw_root, str):
+        return [], ["Codex plugin skills must be a string"]
+    if raw_root.rstrip("/") != "./skills":
+        return [], ["Codex plugin skills must be ./skills/"]
+
+    root, errors = resolve_skill_root(raw_root, "Codex plugin")
+    if root is None or not root.is_dir():
+        return [], errors
+    return sorted(path.parent.resolve() for path in root.rglob("SKILL.md")), errors
 
 
 def validate_markdown_links(path: Path) -> list[str]:
@@ -141,17 +163,23 @@ def validate() -> list[str]:
 
     try:
         marketplace = load_json(ROOT / ".claude-plugin" / "marketplace.json")
-        plugin = load_json(PLUGIN_ROOT / ".claude-plugin" / "plugin.json")
+        claude_plugin = load_json(CLAUDE_MANIFEST)
+        codex_plugin = load_json(CODEX_MANIFEST)
         compatibility = load_json(COMPATIBILITY)
     except ValidationError as exc:
         return [str(exc)]
+
+    if claude_plugin.get("name") != codex_plugin.get("name"):
+        errors.append("Claude and Codex plugin names differ")
+    if claude_plugin.get("version") != codex_plugin.get("version"):
+        errors.append("Claude and Codex plugin versions differ")
 
     entries = marketplace.get("plugins", [])
     if len(entries) != 1:
         errors.append("marketplace must contain exactly one plugin")
     else:
         entry = entries[0]
-        if entry.get("name") != plugin.get("name"):
+        if entry.get("name") != claude_plugin.get("name"):
             errors.append("marketplace and plugin names differ")
         source = entry.get("source")
         expected_source = PLUGIN_ROOT.resolve()
@@ -162,10 +190,33 @@ def validate() -> list[str]:
             if resolved_source != expected_source or not resolved_source.is_dir():
                 errors.append("marketplace plugin source must be ./plugins/felix-skills")
             elif not (resolved_source / ".claude-plugin" / "plugin.json").is_file():
-                errors.append("marketplace plugin source is missing plugin.json")
+                errors.append("marketplace plugin source is missing Claude plugin.json")
+            elif not (resolved_source / ".codex-plugin" / "plugin.json").is_file():
+                errors.append("marketplace plugin source is missing Codex plugin.json")
 
-    skill_dirs, discovery_errors = discover_skill_dirs(plugin)
-    errors.extend(discovery_errors)
+    claude_skill_dirs, claude_discovery_errors = discover_claude_skill_dirs(
+        claude_plugin
+    )
+    codex_skill_dirs, codex_discovery_errors = discover_codex_skill_dirs(codex_plugin)
+    errors.extend(claude_discovery_errors)
+    errors.extend(codex_discovery_errors)
+
+    claude_names = {path.name for path in claude_skill_dirs}
+    codex_names = {path.name for path in codex_skill_dirs}
+    duplicate_codex_names = {
+        path.name
+        for path in codex_skill_dirs
+        if sum(other.name == path.name for other in codex_skill_dirs) > 1
+    }
+    for name in sorted(duplicate_codex_names):
+        errors.append(f"duplicate Codex skill directory name: {name}")
+    if claude_names != codex_names:
+        errors.append(
+            "Claude and Codex skill inventories differ: "
+            f"claude={sorted(claude_names)}, codex={sorted(codex_names)}"
+        )
+
+    skill_dirs = claude_skill_dirs
     actual_names: set[str] = set()
     duplicate_directory_names: set[str] = set()
     for skill_dir in skill_dirs:
@@ -174,6 +225,23 @@ def validate() -> list[str]:
         actual_names.add(skill_dir.name)
     for name in sorted(duplicate_directory_names):
         errors.append(f"duplicate skill directory name: {name}")
+
+    archived_names = (
+        {path.parent.name for path in ARCHIVE_ROOT.glob("*/SKILL.md")}
+        if ARCHIVE_ROOT.is_dir()
+        else set()
+    )
+    expected_archived_names = {"adhd", "deepinit", "ticket-loop"}
+    if archived_names != expected_archived_names:
+        errors.append(
+            "deprecated skill archive differs from expected inventory: "
+            f"expected={sorted(expected_archived_names)}, actual={sorted(archived_names)}"
+        )
+    if archived_names & actual_names:
+        errors.append(
+            "deprecated skills appear in active inventory: "
+            f"{sorted(archived_names & actual_names)}"
+        )
 
     configured = compatibility.get("skills", {})
     if not isinstance(configured, dict):
@@ -273,7 +341,8 @@ def validate() -> list[str]:
     for required in (
         "claude plugin marketplace add fcdtc/felix-plugins",
         "codex plugin marketplace add fcdtc/felix-plugins",
-        "./skills/pstack",
+        ".codex-plugin/plugin.json",
+        "archive/deprecated-skills",
         "Claude Code",
         "Codex",
     ):

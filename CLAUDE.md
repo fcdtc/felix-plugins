@@ -1,6 +1,6 @@
 ## Agent skills
 
-Claude Code 与 Codex 共用本文件；`AGENTS.md` 必须保持为指向本文件的相对符号链接。修改 skill、平台 sidecar、安装说明或支持范围时，遵循 `plugins/felix-skills/compatibility.json`，并运行 `python3 scripts/validate-skills.py`。
+Claude Code 与 Codex 共用本文件；`AGENTS.md` 必须保持为指向本文件的相对符号链接。修改 skill、平台 sidecar、安装说明或支持范围时，保持 `plugins/felix-skills/.claude-plugin/plugin.json`、`plugins/felix-skills/.codex-plugin/plugin.json` 与 `plugins/felix-skills/compatibility.json` 一致，并运行 `python3 scripts/validate-skills.py`。
 
 ### Issue tracker
 
