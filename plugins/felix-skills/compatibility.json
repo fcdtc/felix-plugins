@@ -30,6 +30,7 @@
     "prompt-builder": {"support": "claude-and-codex"},
     "prototype": {"support": "claude-and-codex"},
     "pstack-teach": {"support": "claude-and-codex", "requires": ["how", "why"]},
+    "reference-design": {"support": "claude-and-codex"},
     "research": {"support": "claude-and-codex"},
     "retro": {"support": "claude-and-codex"},
     "setup-matt-pocock-skills": {"support": "claude-and-codex"},

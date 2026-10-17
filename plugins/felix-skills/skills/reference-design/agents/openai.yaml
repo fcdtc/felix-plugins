@@ -1,0 +1,5 @@
+interface:
+  display_name: "源码借鉴指南"
+  short_description: "围绕目标项目研究参考仓库的设计思路，生成带源码指针的借鉴指南"
+policy:
+  allow_implicit_invocation: false
