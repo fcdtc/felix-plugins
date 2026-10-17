@@ -1,0 +1,5 @@
+interface:
+  display_name: "Recall"
+  short_description: "重建近期工作上下文，汇总当前状态、遗留问题和下一步行动"
+policy:
+  allow_implicit_invocation: false

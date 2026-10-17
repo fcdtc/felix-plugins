@@ -1,0 +1,5 @@
+interface:
+  display_name: "Unslop"
+  short_description: "去除文本中的 AI 写作痕迹，同时保留原意并匹配目标语气"
+policy:
+  allow_implicit_invocation: false

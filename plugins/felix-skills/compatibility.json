@@ -32,6 +32,7 @@
     "prototype": {"support": "claude-and-codex"},
     "pstack-teach": {"support": "claude-and-codex", "requires": ["how", "why"]},
     "reference-design": {"support": "claude-and-codex"},
+    "recall": {"support": "claude-and-codex", "requires": ["why"]},
     "research": {"support": "claude-and-codex"},
     "retro": {"support": "claude-and-codex"},
     "setup-matt-pocock-skills": {"support": "claude-and-codex"},
@@ -42,6 +43,7 @@
     "to-spec": {"support": "claude-and-codex"},
     "to-tickets": {"support": "claude-and-codex"},
     "triage": {"support": "claude-and-codex"},
+    "unslop": {"support": "claude-and-codex"},
     "video-summary": {
       "support": "claude-and-codex",
       "environment_requirements": [
