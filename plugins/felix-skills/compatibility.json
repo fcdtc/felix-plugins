@@ -33,7 +33,7 @@
     "prototype": {"support": "claude-and-codex"},
     "pstack-teach": {"support": "claude-and-codex", "requires": ["how", "why"]},
     "recall": {"support": "claude-and-codex", "requires": ["why"]},
-    "refer-to": {"support": "claude-and-codex", "requires": ["how"]},
+    "refer-to": {"support": "claude-and-codex", "requires": ["how", "unslop"]},
     "research": {"support": "claude-and-codex"},
     "retro": {"support": "claude-and-codex"},
     "setup-matt-pocock-skills": {"support": "claude-and-codex"},
