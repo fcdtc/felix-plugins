@@ -58,6 +58,8 @@ class LauncherTests(unittest.TestCase):
         lock = launcher.REQUIREMENTS.read_text(encoding='utf-8')
         self.assertIn('yt-dlp==2026.8.19', lock)
         self.assertIn('yt-dlp-ejs==0.8.0', lock)
+        self.assertIn('curl-cffi==', lock)
+        self.assertIn('curl_cffi', launcher.DIRECT_IMPORTS)
         self.assertNotIn('yt-dlp==2025.10.14', lock)
 
     def test_unknown_action_is_rejected(self):

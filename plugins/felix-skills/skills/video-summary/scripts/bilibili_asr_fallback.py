@@ -53,6 +53,12 @@ def write_netscape_cookie():
     return handle.name
 
 
+def yt_dlp_args():
+    """使用当前虚拟环境，并模拟浏览器指纹以通过 Bilibili 风控。"""
+    return [sys.executable, '-I', '-m', 'yt_dlp', '--ignore-config', '--no-update',
+            '--impersonate', 'Chrome']
+
+
 def download_audio(bv_id, p_num=0):
     """用 yt-dlp 下载音频，返回 (音频路径, 标题, 产物目录)。"""
     url = f'https://www.bilibili.com/video/{bv_id}/'
@@ -64,8 +70,7 @@ def download_audio(bv_id, p_num=0):
     cookie_args = ['--cookies', cookie_path] if cookie_path else []
     try:
         info = common.run([
-            sys.executable, '-m', 'yt_dlp', '--no-update', *cookie_args,
-            '-f', 'ba', '-j', *page_args, url
+            *yt_dlp_args(), *cookie_args, '-f', 'ba', '-j', *page_args, url
         ], capture_output=True, text=True)
         title = bv_id
         if info.returncode == 0 and info.stdout.strip():
@@ -78,10 +83,8 @@ def download_audio(bv_id, p_num=0):
         audio_path = os.path.join(out_dir, 'audio.m4a')
         if not os.path.exists(audio_path):
             common.run([
-                sys.executable, '-m', 'yt_dlp', '--no-update', *cookie_args,
-                '-f', '30280/30232/30216/bestaudio',
-                '-o', audio_path,
-                *page_args, url
+                *yt_dlp_args(), *cookie_args, '-f', '30280/30232/30216/bestaudio',
+                '-o', audio_path, *page_args, url
             ], check=True)
         return audio_path, title, out_dir
     finally:

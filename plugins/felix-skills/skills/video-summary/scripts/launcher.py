@@ -22,7 +22,7 @@ ACTIONS = {
     'validate-delivery': 'validate_delivery.py',
 }
 DIRECT_IMPORTS = ('requests', 'bilibili_api', 'aiohttp', 'qrcode', 'yt_dlp', 'yt_dlp_ejs',
-                  'mlx_whisper')
+                  'curl_cffi', 'mlx_whisper')
 SCHEMA_VERSION = 2
 
 
