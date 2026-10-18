@@ -1,0 +1,5 @@
+interface:
+  display_name: "Arena"
+  short_description: "并行生成多个候选方案，交叉评审后择优合成并验证结果"
+policy:
+  allow_implicit_invocation: false

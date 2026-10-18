@@ -1,6 +1,7 @@
 {
   "schema_version": 1,
   "skills": {
+    "arena": {"support": "claude-and-codex"},
     "ask-matt": {"support": "claude-and-codex"},
     "bro": {"support": "claude-and-codex"},
     "code-review": {"support": "claude-and-codex"},
