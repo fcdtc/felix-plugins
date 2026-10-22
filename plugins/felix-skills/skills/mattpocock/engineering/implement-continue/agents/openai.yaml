@@ -1,0 +1,5 @@
+interface:
+  display_name: "Implement Continue"
+  short_description: "Continue unfinished work from a spec or tickets"
+policy:
+  allow_implicit_invocation: false

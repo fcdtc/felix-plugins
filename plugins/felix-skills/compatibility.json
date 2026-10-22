@@ -20,6 +20,7 @@
     "how": {"support": "claude-and-codex"},
     "html-ppt": {"support": "claude-and-codex"},
     "implement": {"support": "claude-and-codex"},
+    "implement-continue": {"support": "claude-and-codex", "requires": ["tdd", "code-review"]},
     "implement-spec": {"support": "claude-and-codex"},
     "improve-codebase-architecture": {"support": "claude-and-codex"},
     "maintain-verification-skill": {"support": "claude-and-codex"},
