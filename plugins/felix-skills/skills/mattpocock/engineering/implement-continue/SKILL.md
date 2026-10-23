@@ -9,7 +9,7 @@ Continue implement the work described by the user in the spec or tickets.
 
 If the user passes a ticket reference, fetch it from the issue tracker and state its title before starting. If the reference is ambiguous, ask.
 
-当前ticket执行过但为最终完成，启动时核对已有进度；关键阶段结束或交接前写入检查点。
+当前ticket执行过所以是claimed状态，未最终完成。启动实现前，先核对已有进度、关键阶段结束或交接前写入检查点。
 
 
 Call the Skill tool with "tdd" where possible, at pre-agreed seams.
