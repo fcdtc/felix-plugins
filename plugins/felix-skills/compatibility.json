@@ -1,6 +1,13 @@
 {
   "schema_version": 1,
   "skills": {
+    "archify": {
+      "support": "claude-and-codex",
+      "environment_requirements": [
+        "Node.js 18 or newer for diagram rendering and validation",
+        "a supported Chrome or Chromium browser for automated browser checks"
+      ]
+    },
     "arena": {"support": "claude-and-codex"},
     "ask-matt": {"support": "claude-and-codex"},
     "bro": {"support": "claude-and-codex"},

@@ -1,0 +1,5 @@
+interface:
+  display_name: "Archify"
+  short_description: "Create validated HTML diagrams and one-page explainers"
+policy:
+  allow_implicit_invocation: false

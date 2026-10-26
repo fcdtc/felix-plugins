@@ -1,6 +1,6 @@
 {
 	"name": "felix-skills",
 	"description": "felix 的个人技能包（Codex 插件分发）",
-	"version": "0.1.28",
+	"version": "0.1.29",
 	"skills": "./skills/"
 }
