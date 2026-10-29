@@ -30,6 +30,13 @@
     "implement-continue": {"support": "claude-and-codex", "requires": ["tdd", "code-review"]},
     "implement-spec": {"support": "claude-and-codex"},
     "improve-codebase-architecture": {"support": "claude-and-codex"},
+    "init_aixue": {
+      "support": "claude-and-codex",
+      "environment_requirements": [
+        "Python 3.9 or newer and Git 2.31 or newer",
+        "macOS or Linux for centralized workspace file locking"
+      ]
+    },
     "maintain-verification-skill": {"support": "claude-and-codex"},
     "note": {"support": "claude-and-codex"},
     "note-import": {"support": "claude-and-codex", "requires": ["note"]},

@@ -55,6 +55,19 @@ codex plugin add felix-skills@felix
 
 Codex IDE 扩展不使用 plugin marketplace 时，可以把所需 skill 安装到项目级 `.agents/skills/` 或用户级 `~/.agents/skills/`。
 
+## 爱学项目初始化
+
+`init_aixue` 仅显式调用，初始化目标仓库的开发、构建部署、MIA 与人工交接文档；支持独立仓库和集中式协调主仓。集中式额外交付配置驱动的 workspace 脚本与临时仓库测试，不创建实际工作区。
+
+Claude Code 调用示例：
+
+```text
+/felix-skills:init_aixue standalone
+/felix-skills:init_aixue centralized，主仓=<路径>，子仓清单=<已确认登记或配置文件>
+```
+
+Codex 使用技能列表中实际发现的 `init_aixue` 显式调用。已有文档、代理规则与脚本保留并增量合并；源码入口和内部模板见 [init_aixue](plugins/felix-skills/skills/init_aixue/SKILL.md)。技能初始化不安装依赖、不提交／推送或操作平台，生成手册不代表自动部署已绑定。
+
 ## 双平台 manifest
 
 插件根同时维护两份原生 manifest：

@@ -1,0 +1,5 @@
+interface:
+  display_name: "初始化爱学项目"
+  short_description: "初始化独立或集中式项目的开发文档与工作区资产"
+policy:
+  allow_implicit_invocation: false
