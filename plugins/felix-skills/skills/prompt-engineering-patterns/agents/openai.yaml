@@ -1,0 +1,5 @@
+interface:
+  display_name: "Prompt Engineering Patterns"
+  short_description: "Design, debug, and optimize prompts for production LLM applications"
+policy:
+  allow_implicit_invocation: true

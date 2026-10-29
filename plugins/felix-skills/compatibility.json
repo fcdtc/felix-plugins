@@ -45,6 +45,13 @@
     "note-query": {"support": "claude-and-codex", "requires": ["note"]},
     "pr": {"support": "claude-and-codex"},
     "prompt-builder": {"support": "claude-and-codex"},
+    "prompt-engineering-patterns": {
+      "support": "claude-and-codex",
+      "environment_requirements": [
+        "Python 3 with NumPy for the optional prompt optimization script",
+        "provider SDKs and credentials when running the LLM examples"
+      ]
+    },
     "prototype": {"support": "claude-and-codex"},
     "pstack-teach": {"support": "claude-and-codex", "requires": ["how", "why"]},
     "recall": {"support": "claude-and-codex", "requires": ["why"]},
