@@ -30,7 +30,7 @@ python3 <SKILL_DIR>/scripts/initialize.py --target <COORDINATOR> --mode centrali
 
 默认只输出 JSON 计划；确认计划与本次请求一致后追加 `--apply`。工具只创建缺失文件，已有内容相同则 `unchanged`，不同则 `preserved`，不覆盖；`preserved` 是待语义核对项，不是失败或已完成迁移。工具不是替代 Agent 阅读／判断的合并器。
 
-1. 从内部模板生成开发环境、平台操作、后端构建发布、MIA Agent、RPC 接入及完整人工交接手册。把可核实的本项目约定写入，未知资源保留待确认；已有服务不沿用“尚无代码”等初始化断言。
+1. 从内部模板生成开发环境、平台操作、后端构建发布、Go RPC 日志、MIA Agent、RPC 接入及完整人工交接手册。目标使用 Go／内部 Kitex 时，读取[日志模板](references/templates/development/service-logging.md)，核对公共库与现有采集链后适配库名、初始化、中间件及日志验收；非 Go 项目标明该页不适用。把可核实的本项目约定写入，未知资源保留待确认；已有服务不沿用“尚无代码”等初始化断言。
 2. 基础工单／分诊／领域规则仅在缺失时采用模板；已有其他 tracker、状态词表或多上下文规则保留，不静默改成本地 Markdown／single-context。
 3. 按所选形式合并 README 导航和精简代理入口。已有 CLAUDE／AGENTS 真源编辑其真源；符号链接保持，双文件已有时遵守各自职责。工具只在两者均不存在时创建 `AGENTS.md`，其他情况由 Agent 增量合并。
 4. 集中式安装完整脚本、测试、项目登记和本地绑定忽略规则；读取[集中式适配](references/centralized.md)处理主仓与子仓。子仓只加中央入口指针，不复制中央工单或领域真源。

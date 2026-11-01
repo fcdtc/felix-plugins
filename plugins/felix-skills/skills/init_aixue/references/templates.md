@@ -7,6 +7,7 @@
 | 开发环境 | [独立式](templates/development/environment.md)／[集中式](templates/centralized/environment.md) | 仓库形式、实际分支、工具链与工作区入口 |
 | 平台操作 | [platform-operations.md](templates/development/platform-operations.md) | 当前工具、授权与证据真源 |
 | 后端发布 | [backend-service-release.md](templates/development/backend-service-release.md) | 已有服务／构建状态、实际分支和自动绑定 |
+| Go RPC 日志 | [service-logging.md](templates/development/service-logging.md) | 公共日志库可用性、初始化与中间件、context、脱敏及采集验收 |
 | MIA Agent | [mia-agent-release.md](templates/development/mia-agent-release.md) | 已有模板、资产和稳定路由，未知项待确认 |
 | RPC 接入 | [mia-rpc-tool-host-release.md](templates/development/mia-rpc-tool-host-release.md) | 契约、PSM、版本与阶段门禁 |
 | 人工交接 | [human-handoff.md](templates/development/human-handoff.md) | 保留七类场景、模板及回读标准，运行时填真实值 |

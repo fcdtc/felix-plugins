@@ -43,7 +43,7 @@ class InitializeTest(unittest.TestCase):
     def test_standalone_apply_is_idempotent_and_complete(self):
         module.initialize(self.target, 'standalone', apply=True)
         expected = ['environment', 'platform-operations', 'backend-service-release',
-                    'mia-agent-release', 'mia-rpc-tool-host-release', 'human-handoff']
+                    'service-logging', 'mia-agent-release', 'mia-rpc-tool-host-release', 'human-handoff']
         for name in expected:
             self.assertTrue((self.target / f'docs/development/{name}.md').is_file())
         result = module.initialize(self.target, 'standalone', apply=True)
@@ -154,6 +154,30 @@ class InitializeTest(unittest.TestCase):
             for heading in ('创建 MIA RPC Version', '刷新 Workflow RPC snapshot', '发布 Skill 固定版本',
                             '创建或升级 Tool 固定版本', '创建 Host 后继草稿', '真实 HTTP 入口身份验收', '登录审批与权限协助'):
                 self.assertIn('## ' + heading, handoff)
+
+    def test_logging_contract_and_navigation_in_both_modes(self):
+        config = self.config()
+        for mode in ('standalone', 'centralized'):
+            with self.subTest(mode=mode):
+                target = self.repo('logging-' + mode)
+                module.initialize(target, mode, config=config if mode == 'centralized' else None, apply=True)
+                logging = (target/'docs/development/service-logging.md').read_text()
+                for required in ('code.byted.org/gopkg/logs',
+                                 'code.byted.org/pony/common/biz/logging',
+                                 'code.byted.org/pony/common/biz/kitex/mw',
+                                 'logging.InitDebugLogger(servicePSM)',
+                                 'mw.LogBaseRespMW', 'mw.LogPanicMW', 'mw.ServiceCalledLogMw',
+                                 'logs.CtxInfo(ctx', 'logs.CtxError(ctx', 'CtxWarn',
+                                 'KITEX_LOG_DIR', 'rpcAccess', 'rpcCall',
+                                 '完整 request／response', 'app、rpc、run', '非零退出'):
+                    self.assertIn(required, logging)
+                for file in ('README.md', 'AGENTS.md', 'docs/development/environment.md',
+                             'docs/development/backend-service-release.md'):
+                    self.assertIn('service-logging.md', (target/file).read_text())
+                for source_identity in ('hippo.strategy.memory', 'hippo.spa.', '/Users/bytedance'):
+                    self.assertNotIn(source_identity, logging)
+                second = module.initialize(target, mode, config=config if mode == 'centralized' else None, apply=True)
+                self.assertTrue(all(item['state'] == 'unchanged' for item in second['files']))
 
     def test_standalone_rejects_project_config(self):
         with self.assertRaises(ValueError):

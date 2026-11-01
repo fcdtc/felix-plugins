@@ -79,6 +79,7 @@ def content_files(target, mode, branch, config):
             f'日常开发使用 `{branch}`；开发、Git 或 worktree 操作前读取 `docs/development/environment.md`。\n\n'
             '平台操作先读 `docs/development/platform-operations.md`；构建部署读 `backend-service-release.md`，'
             'MIA Agent／Skill 读 `mia-agent-release.md`，RPC 接入读 `mia-rpc-tool-host-release.md`（均在 `docs/development/`）。\n\n'
+            'Go／内部 Kitex 服务的日志初始化、中间件、业务日志或采集配置变更前，读取 `docs/development/service-logging.md`。\n\n'
             '需求和工单读写前读取 `docs/agents/issue-tracker.md`；分诊前读取 `docs/agents/triage-labels.md`；探索代码前读取 `docs/agents/domain.md`。\n'
         )
         if mode == 'centralized':

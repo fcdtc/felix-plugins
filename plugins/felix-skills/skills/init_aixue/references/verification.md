@@ -19,6 +19,7 @@ python3 -I -m unittest discover -s plugins/felix-skills/skills/init_aixue/assets
 3. 人工交接手册有 RPC Version、Workflow snapshot、Skill、Tool、Host 草稿、身份验收及登录／审批七类场景，各有准备、消息与回读标准。
 4. 既有 tracker／领域约定和自定义配置保留，所有 `preserved` 文件完成语义核对；重复调用没有重复章节。
 5. 集中式配置只含明确项目，wrapper 可执行，绑定忽略规则生效；不创建运行时绑定。运行目标的 `python3 -m unittest discover -s tests -p 'test_workspace.py' -v`，它仅使用临时仓。
-6. 查看实际 Git diff 与状态，确认未覆盖用户工作，未提交／推送，未操作真实工作区或平台。失败、跳过和未验证范围如实报告。
+6. Go RPC 日志文档包含具体库与 API、初始化和服务端中间件示例、context 传递、分级事件、脱敏、框架输出及真实日志回读步骤；开发和发布入口能触达该页。未知公共库版本、整行格式或采集状态保留待核验，非 Go 项目不强制接入。
+7. 查看实际 Git diff 与状态，确认未覆盖用户工作，未提交／推送，未操作真实工作区或平台。失败、跳过和未验证范围如实报告。
 
 测试通过只证明初始化文件和脚本行为；SCM／BITS／MIA 的真实平台绑定仍按项目实施流程验收。

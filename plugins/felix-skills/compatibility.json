@@ -38,6 +38,13 @@
       ]
     },
     "maintain-verification-skill": {"support": "claude-and-codex"},
+    "mia-agent-design": {
+      "support": "claude-and-codex",
+      "requires": ["writing-for-agents"],
+      "environment_requirements": [
+        "操作 MIA 平台时需安装官方 miacli skill 及其所需 CLI，并具有目标空间访问权限；仅本地设计不要求平台访问"
+      ]
+    },
     "note": {"support": "claude-and-codex"},
     "note-import": {"support": "claude-and-codex", "requires": ["note"]},
     "note-lint": {"support": "claude-and-codex", "requires": ["note"]},
