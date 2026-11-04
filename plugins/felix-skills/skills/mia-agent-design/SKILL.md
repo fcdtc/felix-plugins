@@ -1,6 +1,7 @@
 ---
 name: mia-agent-design
-description: 创建或优化 MIA Agent 链路、接入新场景，或排查场景路由、Skill 流程与 Tool 参数质量时使用。覆盖工程交接、MIA 入参、System/User Prompt、Skill/reference、Tool 契约及分级验收；平台操作交给 miacli。
+description: 创建与优化 MIA Agent 链路，覆盖上下文、Prompt、Skill、Tool 契约及分级验收；平台操作交给 miacli。
+disable-model-invocation: true
 ---
 
 # MIA Agent 链路设计与优化
