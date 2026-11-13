@@ -60,7 +60,20 @@ def number(value, where, integer=False, nullable=True):
 
 
 def schema(value):
-    require(type(value.get("schema_version")) is int and value["schema_version"] == 1, "schema_version 必须为整数 1")
+    require(type(value.get("schema_version")) is int and value["schema_version"] in (1, 2), "schema_version 必须为整数 1 或 2")
+
+
+def agent_flow(manifest):
+    return manifest["schema_version"] == 2
+
+
+def required_checks(manifest):
+    base = {"identity", "design", "execution", "smoothness"}
+    return base | {"tool_usage", "completion_gate"} if agent_flow(manifest) else base
+
+
+def scoped_findings(manifest, report):
+    return [f for f in report["findings"] if not agent_flow(manifest) or f["scope"] == "agent_flow"]
 
 
 def identity(value, where):
@@ -90,7 +103,17 @@ def safe_url(value):
 
 
 def validate_manifest(value):
-    fields(value, "schema_version title task_url generated_at scope_complete scope_note target cases", "manifest")
+    schema(value)
+    names = "schema_version title task_url generated_at scope_complete scope_note target cases"
+    fields(value, names + (" audit_scope" if agent_flow(value) else ""), "manifest")
+    if agent_flow(value):
+        scope = value["audit_scope"]
+        fields(scope, "profile focus agent_purpose completion_criteria exclusions", "audit_scope")
+        enum(scope["profile"], "agent_flow", "audit_scope.profile")
+        for key in ("focus", "completion_criteria", "exclusions"):
+            texts(scope[key], "audit_scope." + key)
+            require(bool(scope[key]), "audit_scope." + key + " 不能为空")
+        text(scope["agent_purpose"], "audit_scope.agent_purpose")
     require(type(value["scope_complete"]) is bool, "scope_complete 必须是 boolean")
     text(value["scope_note"], "scope_note")
     schema(value)
@@ -110,7 +133,7 @@ def validate_manifest(value):
         for key in ("message_ids", "required_check_ids"):
             texts(case[key], key)
             unique(case[key], key)
-        require(set(("identity", "design", "execution", "smoothness")).issubset(case["required_check_ids"]), "required_check_ids 至少包含 identity/design/execution/smoothness")
+        require(required_checks(value).issubset(case["required_check_ids"]), "required_check_ids 缺少必需检查: " + "/".join(sorted(required_checks(value))))
     unique([c["case_key"] for c in value["cases"]], "manifest case_key")
     unique([c["ordinal"] for c in value["cases"]], "manifest ordinal")
     return value
@@ -125,6 +148,7 @@ def member(manifest, key):
 def validate_case(value, manifest):
     fields(value, "schema_version case_key title summary identity context verdict coverage checks timeline findings struggles metrics limitations evidence_index", "case")
     schema(value)
+    require(value["schema_version"] == manifest["schema_version"], "case 与 manifest schema_version 必须一致；历史报告须重新审计而非改标签")
     for key in ("case_key", "title", "summary"):
         text(value[key], key)
     member(manifest, value["case_key"])
@@ -172,7 +196,10 @@ def validate_case(value, manifest):
         refs(step, "timeline")
     unique([t["step"] for t in value["timeline"]], "timeline.step")
     for finding in value["findings"]:
-        fields(finding, "id severity category layer claim expected observed impact confidence evidence_refs suggestion regression", "finding")
+        names = "id severity category layer claim expected observed impact confidence evidence_refs suggestion regression"
+        fields(finding, names + (" scope" if agent_flow(manifest) else ""), "finding")
+        if agent_flow(manifest):
+            enum(finding["scope"], "agent_flow platform_context", "finding.scope")
         for key in ("id", "category", "layer", "claim", "expected", "observed", "impact", "suggestion", "regression"):
             text(finding[key], "finding." + key)
         enum(finding["severity"], "P0 P1 P2", "severity")
@@ -238,13 +265,14 @@ def assess(manifest, report, page_missing=False):
         reasons.append("缺少已渲染 case HTML；已生成证据不足占位页")
     hard_fail = ("fail" in (report["verdict"]["design"], report["verdict"]["execution"])
                  or any(c["status"] == "fail" for c in report["checks"])
-                 or any(f["confidence"] == "confirmed" for f in report["findings"]))
+                 or any(f["confidence"] == "confirmed" for f in scoped_findings(manifest, report)))
     if hard_fail:
         return "fail", ["存在有证据的设计/执行失败、失败检查或已确认实质偏差"] + reasons
     if reasons:
         return "insufficient", reasons
-    issues = (report["struggles"] or
-              any((report["metrics"][key] or 0) > 0 for key in ("tool_failures", "business_errors", "retries")))
+    # v2错误计数仅是事实：首次不可用后正确受阻并继续不自动算挣扎。
+    issues = report["struggles"] or (report["metrics"]["retries"] or 0) > 0 or (not agent_flow(manifest) and
+              any((report["metrics"][key] or 0) > 0 for key in ("tool_failures", "business_errors")))
     if report["verdict"]["smoothness"] != "smooth" or issues:
         return "recovered", ["设计与执行通过，但恢复、挣扎或问题记录使其不计顺畅通过"]
     return "pass", ["设计与执行通过；必需检查和轨迹完整；没有已记录问题"]
@@ -295,30 +323,39 @@ def metadata(manifest):
     task = ('<a href="' + esc(manifest["task_url"]) + '" target="_blank" rel="noopener noreferrer">评测任务</a>') if manifest["task_url"] else "未提供"
     rows.append(("任务入口", task))
     rows.append(("样本清单范围", esc(manifest["scope_note"])))
+    if agent_flow(manifest):
+        audit = manifest["audit_scope"]
+        rows.extend([(esc("审计口径"), esc("Agent流程执行；不评Tool是否Mock")),
+                     (esc("Agent主要目的"), esc(audit["agent_purpose"])),
+                     (esc("关注点"), listing(audit["focus"])),
+                     (esc("流程收尾标准"), listing(audit["completion_criteria"])),
+                     (esc("不在判定范围"), listing(audit["exclusions"]))])
+    else:
+        rows.append(("审计口径", "历史schema v1原口径；未按Agent流程新标准重新审计"))
     scope = "完整清单；统计分母为 manifest 中全部样本。" if manifest["scope_complete"] else "部分清单，仅对已取得样本统计；不代表全任务覆盖。"
     return '<p class="notice">' + esc(scope) + '</p>' + table(["元信息", "值"], rows)
 
 
 def render_case(manifest, report):
     status, reasons = assess(manifest, report)
-    refs = lambda item: esc("、".join(item["evidence_refs"]) or "无")
     ident = table(["身份字段", "目标", "实际运行"], [(esc(k), esc(manifest["target"][k]), esc(v or "未知")) for k, v in report["identity"].items()])
     verdict = table(["判定轴", "输入判定"], [(esc(k), esc(v)) for k, v in report["verdict"].items()])
-    ident += verdict + paragraph("脚本重算：" + LABELS[status]) + listing(reasons)
+    scope = manifest["audit_scope"] if agent_flow(manifest) else None
+    scope_note = ("审计Agent流程、工具使用和结束时机；不评Tool是否Mock或真实持久化/送达。" if scope else "历史schema v1原口径；未按新标准重审。")
+    ident += paragraph(scope_note) + (paragraph("Agent目的：" + scope["agent_purpose"]) if scope else "") + verdict + paragraph("脚本重算：" + LABELS[status]) + listing(reasons)
     context = "".join("<h3>" + label + "</h3>" + paragraph(report["context"][key] or "未提供") for key, label in (("input_summary", "输入概要"), ("output_summary", "输出概要"), ("annotations_summary", "评测标注（仅背景，不直接参与判断）")))
-    checks = table(["检查 / 要求", "预期", "实际", "状态", "证据"], [(esc(c["id"] + " / " + c["requirement"]), esc(c["expected"]), esc(c["observed"]), esc(c["status"]), refs(c)) for c in report["checks"]])
-    timeline = table(["步骤", "调用 / 动作", "结果", "耗时 ms", "证据"], [(esc(t["step"]), esc(t["action"]), esc(t["result"]), esc(fmt(t["duration_ms"])), refs(t)) for t in sorted(report["timeline"], key=lambda t: t["step"])])
-    findings = table(["偏差 / 级别", "分类 / 层级", "判断", "预期 / 实际", "影响", "置信度", "证据"], [(esc(f["id"] + " / " + f["severity"]), esc(f["category"] + " / " + f["layer"]), esc(f["claim"]), esc(f["expected"] + " / " + f["observed"]), esc(f["impact"]), esc(f["confidence"]), refs(f)) for f in report["findings"]]) if report["findings"] else paragraph("无已记录偏差")
-    struggles = table(["模式", "过程", "可避免", "优化", "证据"], [(esc(s["pattern"]), esc(s["description"]), "是" if s["avoidable"] else "否", esc(s["optimization"]), refs(s)) for s in report["struggles"]]) if report["struggles"] else paragraph("无已记录挣扎")
-    advice = table(["偏差", "修改建议", "回归验证"], [(esc(f["id"]), esc(f["suggestion"]), esc(f["regression"])) for f in sorted(report["findings"], key=lambda f: (f["severity"], f["id"]))]) if report["findings"] else paragraph("无偏差修复建议")
+    checks = table(["检查要求", "应该怎么做", "实际做了什么", "状态"], [(esc(c["requirement"]), esc(c["expected"]), esc(c["observed"]), esc(c["status"])) for c in report["checks"]])
+    timeline = table(["步骤", "调用 / 动作", "结果", "耗时 ms"], [(esc(t["step"]), esc(t["action"]), esc(t["result"]), esc(fmt(t["duration_ms"]))) for t in sorted(report["timeline"], key=lambda t: t["step"])])
+    struggles = table(["模式", "过程", "可避免", "优化"], [(esc(s["pattern"]), esc(s["description"]), "是" if s["avoidable"] else "否", esc(s["optimization"])) for s in report["struggles"]]) if report["struggles"] else paragraph("无已记录挣扎")
+    actionable = scoped_findings(manifest, report)
+    advice = table(["偏差", "修改建议", "回归验证"], [(esc(f["id"]), esc(f["suggestion"]), esc(f["regression"])) for f in sorted(actionable, key=lambda f: (f["severity"], f["id"]))]) if actionable else paragraph("无本次范围内修复建议")
     metrics = table(["资源指标", "值"], [(esc(key), esc(fmt(report["metrics"][key]))) for key in METRICS])
-    evidence = table(["证据 ID", "来源", "脱敏定位", "短引用"], [(esc(e["id"]), esc(e["source"]), esc(e["locator"]), "<pre>" + esc(e["excerpt"]) + "</pre>") for e in report["evidence_index"]])
     coverage = paragraph("覆盖：baseline=" + report["coverage"]["baseline"] + "；trace=" + report["coverage"]["trace"] + "；thinking=" + report["coverage"]["thinking"] + "。思考缺失本身不阻断通过，顺畅度必须有调用轨迹支持。")
-    return page("case.html", dict(TITLE=esc(report["title"]), KEY=esc(report["case_key"]), SUMMARY=paragraph(report["summary"]), IDENTITY=ident, CONTEXT=context, CHECKS=checks, TIMELINE=timeline, FINDINGS=findings, STRUGGLES=struggles, ADVICE=advice, METRICS=metrics, EVIDENCE=evidence, LIMITATIONS=coverage + listing(report["limitations"])))
+    return page("case.html", dict(TITLE=esc(report["title"]), KEY=esc(report["case_key"]), SUMMARY=paragraph(report["summary"]), IDENTITY=ident, CONTEXT=context, CHECKS=checks, TIMELINE=timeline, STRUGGLES=struggles, ADVICE=advice, METRICS=metrics, LIMITATIONS=coverage + listing(report["limitations"])))
 
 
 def placeholder(manifest, case, reasons, report=None):
-    missing = {"schema_version": 1, "case_key": case["case_key"], "title": case["title"], "summary": "证据不足占位页；不是完整 case 评测报告。", "identity": manifest["target"], "context": {"input_summary": "", "output_summary": "", "annotations_summary": ""}, "verdict": {"design": "unknown", "execution": "unknown", "smoothness": "unknown"}, "coverage": {"baseline": "missing", "trace": "missing", "thinking": "missing"}, "checks": [], "timeline": [], "findings": [], "struggles": [], "metrics": {k: None for k in METRICS}, "limitations": list(reasons), "evidence_index": []}
+    missing = {"schema_version": manifest["schema_version"], "case_key": case["case_key"], "title": case["title"], "summary": "证据不足占位页；不是完整 case 评测报告。", "identity": manifest["target"], "context": {"input_summary": "", "output_summary": "", "annotations_summary": ""}, "verdict": {"design": "unknown", "execution": "unknown", "smoothness": "unknown"}, "coverage": {"baseline": "missing", "trace": "missing", "thinking": "missing"}, "checks": [], "timeline": [], "findings": [], "struggles": [], "metrics": {k: None for k in METRICS}, "limitations": list(reasons), "evidence_index": []}
     missing["identity"] = {key: "" for key in manifest["target"]}
     if report is not None:
         missing["identity"] = report["identity"]
@@ -331,10 +368,10 @@ def ratio(count, total):
 
 
 def render_summary(manifest, reports, synthesis, missing_pages):
-    rows, gaps = [], []
+    rows = []
     counts = Counter({key: 0 for key in LABELS})
     coverage = Counter()
-    axes = {axis: Counter() for axis in ("design", "execution")}
+    axes = {axis: Counter() for axis in (("design", "execution", "tool_usage", "completion_gate") if agent_flow(manifest) else ("design", "execution"))}
     for case in sorted(manifest["cases"], key=lambda c: c["ordinal"]):
         key = case["case_key"]
         report = reports.get(key)
@@ -344,9 +381,16 @@ def render_summary(manifest, reports, synthesis, missing_pages):
             axis_status = "unknown"
             if report:
                 relevant = [c for c in report["checks"] if c["id"] == axis]
-                if report["verdict"][axis] == "fail" or any(c["status"] == "fail" for c in relevant):
+                declared = report["verdict"].get(axis)
+                if declared == "fail" or any(c["status"] == "fail" for c in relevant):
                     axis_status = "fail"
-                elif status in ("pass", "recovered") and report["verdict"][axis] == "pass":
+                elif agent_flow(manifest):
+                    known = (report["identity"] == manifest["target"] and
+                             all(report["coverage"][k] == "complete" for k in ("baseline", "trace")) and
+                             relevant and all(c["status"] == "pass" for c in relevant))
+                    if known and (declared == "pass" or axis not in report["verdict"]):
+                        axis_status = "pass"
+                elif status in ("pass", "recovered") and declared == "pass":
                     axis_status = "pass"
             axes[axis][axis_status] += 1
         if status != "insufficient":
@@ -359,23 +403,17 @@ def render_summary(manifest, reports, synthesis, missing_pages):
             coverage["pages"] += 1
         link = '<a href="cases/' + key + '.html">' + esc(case["title"]) + '</a>'
         rows.append((esc(case["ordinal"]), link + '<br><code>' + key + '</code>', '<span class="status">' + LABELS[status] + '</span>', esc("；".join(reasons)), esc(fmt(report["metrics"]["business_errors"]) if report else "未提供")))
-        for reason in reasons:
-            if status == "insufficient" or "不匹配" in reason or "缺少" in reason or "不完整" in reason:
-                gaps.append(key + "：" + reason)
-        if report:
-            if report["coverage"]["thinking"] != "available":
-                gaps.append(key + "：思考覆盖 " + report["coverage"]["thinking"] + "（不单独阻断通过）")
-            gaps.extend(key + "：" + limitation for limitation in report["limitations"])
     n = len(manifest["cases"])
     stats = '<div class="stats">' + "".join('<div class="stat"><span>' + label + '</span><strong>' + str(value) + '</strong></div>' for label, value in (("全部样本 N", n), ("顺畅通过 P", counts["pass"]), ("失败", counts["fail"]), ("恢复/挣扎", counts["recovered"]), ("证据不足", counts["insufficient"]))) + '</div>'
     stats += table(["覆盖率（完整 / 全部样本）", "分子 / 分母", "比例"], [(label, str(coverage[key]) + " / " + str(n), ratio(coverage[key], n)) for key, label in (("analysis", "已可判定分析（非证据不足）"), ("reports", "JSON 报告"), ("pages", "原始 case 页面（不含占位）"), ("baseline", "设计基线"), ("trace", "调用轨迹"), ("thinking", "思考证据"))])
-    stats += table(["保守三轴指标", "通过 / 全部", "率", "失败", "unknown"], [(label, str(axes[axis]["pass"]) + " / " + str(n), ratio(axes[axis]["pass"], n), str(axes[axis]["fail"]), str(axes[axis]["unknown"])) for axis, label in (("design", "保守确认设计遵循率"), ("execution", "保守确认任务完成率"))])
-    stats += paragraph("三轴率采用保守口径：对应轴或同名检查明确 fail 则记失败；只有整体顺畅通过或恢复/挣扎且该轴 pass 才计通过；其余均保留 unknown，不以另一轴声明冲淡未定位偏差。分析覆盖指可判定为通过、失败或恢复/挣扎的 case 比例，不等于全部证据覆盖。")
+    axis_labels = (("design", "设计遵循率"), ("execution", "流程完成率"), ("tool_usage", "工具正确使用率"), ("completion_gate", "结束时机正确率")) if agent_flow(manifest) else (("design", "保守确认设计遵循率"), ("execution", "保守确认任务完成率"))
+    stats += table(["分项指标", "通过 / 全部", "率", "失败", "unknown"], [(label, str(axes[axis]["pass"]) + " / " + str(n), ratio(axes[axis]["pass"], n), str(axes[axis]["fail"]), str(axes[axis]["unknown"])) for axis, label in axis_labels])
+    stats += paragraph("各项按自身判定及同名检查分别统计；身份和基线/轨迹完整时，本项通过不因另一项失败而变unknown。流程完成包括规则允许的静默和受阻收尾，不要求后端真实落盘；平台背景发现不参与Agent通过率。" if agent_flow(manifest) else "历史三轴率保留原保守口径：整体失败时未失败轴仍为unknown。旧报告没有按新标准重审，不用于推算Agent流程通过率。")
     recommendations = []
     for rec in sorted(synthesis["recommendations"], key=lambda r: (r["priority"], r["id"])):
         links = "、".join('<a href="cases/' + key + '.html">' + esc(member(manifest, key)["title"]) + '</a>' for key in rec["case_keys"])
         recommendations.append('<article><h3>' + esc(rec["priority"] + " · " + rec["title"]) + '</h3>' + paragraph("层级：" + rec["layer"]) + paragraph("问题：" + rec["problem"]) + paragraph("修改：" + rec["change"]) + '<p>影响 ' + str(len(rec["case_keys"])) + ' 个 case：' + links + '</p>' + paragraph("验证：" + rec["validation"]) + '</article>')
-    return page("summary.html", dict(TITLE=esc(manifest["title"]), META=metadata(manifest), CONCLUSION=paragraph(synthesis["summary"]), RATE=esc("顺畅通过率=" + str(counts["pass"]) + "/" + str(n) + " · " + ratio(counts["pass"], n)), STATS=stats, RECOMMENDATIONS="".join(recommendations) or paragraph("暂无建议"), CASES=table(["序号", "Case", "重算结论", "判定依据 / 缺口", "业务错误数"], rows, ' id="case-table"'), GAPS=listing(gaps)))
+    return page("summary.html", dict(TITLE=esc(manifest["title"]), META=metadata(manifest), CONCLUSION=paragraph(synthesis["summary"]), RATE=esc("顺畅通过率=" + str(counts["pass"]) + "/" + str(n) + " · " + ratio(counts["pass"], n)), STATS=stats, RECOMMENDATIONS="".join(recommendations) or paragraph("暂无建议"), CASES=table(["序号", "Case", "重算结论", "判定依据 / 缺口", "业务错误数"], rows, ' id="case-table"')))
 
 
 def no_symlink(path):
@@ -466,7 +504,7 @@ def summary_command(args):
     return {"out": str(out), "total": len(manifest["cases"]), "counts": {key: counts[key] for key in LABELS}, "placeholder_cases": sorted(missing_pages)}
 
 
-def demo_data():
+def demo_data(version=2):
     target = {"motif_id": "synthetic-motif", "agent_id": "synthetic-agent", "version": "demo-v1"}
     manifest = {"schema_version": 1, "title": "合成匿名演示", "task_url": "", "generated_at": "2026-01-01T00:00:00Z", "scope_complete": True, "scope_note": "仅四个匿名合成样本，非真实任务", "target": target, "cases": [{"case_key": key, "ordinal": i + 1, "title": "合成示例 · " + LABELS[key], "session_id": "synthetic-session-" + key, "message_ids": ["synthetic-message"], "required_check_ids": ["identity", "design", "execution", "smoothness", "result"]} for i, key in enumerate(LABELS)]}
     base = {"schema_version": 1, "case_key": "pass", "title": "合成示例", "summary": "全部数据均为匿名合成，仅展示固定模板，不代表真实评测。", "identity": target, "context": {"input_summary": "合成用户请求返回两项学习建议。", "output_summary": "合成返回包含两项建议。", "annotations_summary": "合成标注仅作为背景。"}, "verdict": {"design": "pass", "execution": "pass", "smoothness": "smooth"}, "coverage": {"baseline": "complete", "trace": "complete", "thinking": "missing"}, "checks": [{"id": "result", "requirement": "返回两项建议", "expected": "2 项", "observed": "2 项", "status": "pass", "evidence_refs": ["e-result"]}], "timeline": [{"step": 1, "action": "合成工具调用", "result": "返回 2 项", "duration_ms": 120, "evidence_refs": ["e-result"]}], "findings": [], "struggles": [], "metrics": {key: None for key in METRICS}, "limitations": ["仅模板演示，未连接任何平台或开展真实评测。"], "evidence_index": [{"id": "e-result", "source": "synthetic-trace", "locator": "合成事件 1", "excerpt": "合成返回：项目 A；项目 B。"}]}
@@ -490,6 +528,19 @@ def demo_data():
     reports["insufficient"]["verdict"]["execution"] = "unknown"
     reports["insufficient"]["checks"][0].update(status="unknown", evidence_refs=[])
     synthesis = {"summary": "合成演示含顺畅通过、失败、恢复/挣扎、证据不足各一例，顺畅通过率由脚本计算。", "recommendations": [{"id": "rec-1", "priority": "P1", "title": "合成建议：增加输出数量检查", "layer": "agent", "problem": "合成失败 case 数量不足", "change": "返回前检查数量", "case_keys": ["fail", "recovered"], "validation": "合成回归检查返回两项且无需重试"}]}
+    if version == 2:
+        manifest["schema_version"] = 2
+        manifest["audit_scope"] = {"profile": "agent_flow", "focus": ["完整流程", "正确工具使用", "最终结束时机"], "agent_purpose": "处理合成请求中的两项学习建议", "completion_criteria": ["每项建议有结果或规则允许的受阻结论", "最终结束前完成全部独立项"], "exclusions": ["Tool是否Mock", "真实持久化与实际送达"]}
+        for case in manifest["cases"]:
+            case["required_check_ids"].extend(["tool_usage", "completion_gate"])
+        for report in reports.values():
+            report["schema_version"] = 2
+            for key in ("tool_usage", "completion_gate"):
+                report["checks"].append({"id": key, "requirement": "合成 " + key + " 检查", "expected": "工具与流程结束符合合成规则", "observed": "合成轨迹支持检查", "status": "pass", "evidence_refs": ["e-result"]})
+            for finding in report["findings"]:
+                finding["scope"] = "agent_flow"
+    else:
+        require(version == 1, "demo仅支持schema 1或2")
     return manifest, reports, synthesis
 
 

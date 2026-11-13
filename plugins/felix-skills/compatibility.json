@@ -54,6 +54,7 @@
     },
     "mia-eval-audit": {
       "support": "claude-and-codex",
+      "requires": ["grilling"],
       "environment_requirements": [
         "官方 miacli skill、其支持的 pony-mia CLI 与目标 MIA 空间只读访问权限",
         "宿主支持逐 case 独立子代理；默认并发上限 3，分析消耗模型 tokens",

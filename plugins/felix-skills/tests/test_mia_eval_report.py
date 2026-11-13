@@ -36,7 +36,7 @@ class ReportTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name).resolve()
-        self.manifest, self.reports, self.synthesis = renderer.demo_data()
+        self.manifest, self.reports, self.synthesis = renderer.demo_data(version=1)
         self.dump("manifest.json", self.manifest)
         self.dump("synthesis.json", self.synthesis)
         (self.root / "reports").mkdir()
@@ -74,6 +74,40 @@ class ReportTests(unittest.TestCase):
             self.assertNotIn("src", links.scripts[0])
             for link in links.links:
                 self.assertTrue((file.parent / link).is_file(), (file, link))
+
+    def test_summary_omits_limitations_section_but_case_keeps_it(self):
+        for version in (1, 2):
+            with self.subTest(version=version):
+                manifest, reports, synthesis = renderer.demo_data(version=version)
+                report = reports["insufficient"]
+                report["limitations"].append("仅详情展示的限制说明")
+                summary = renderer.render_summary(manifest, reports, synthesis, set())
+                self.assertNotIn("证据缺口与限制", summary)
+                self.assertNotIn("gaps-heading", summary)
+                self.assertNotIn("仅详情展示的限制说明", summary)
+                self.assertIn("证据不足", summary)
+                self.assertIn("判定依据 / 缺口", summary)
+                detail = renderer.render_case(manifest, report)
+                self.assertIn("覆盖与限制", detail)
+                self.assertIn("仅详情展示的限制说明", detail)
+
+    def test_case_shows_plain_checks_without_evidence_or_findings(self):
+        for version in (1, 2):
+            with self.subTest(version=version):
+                manifest, reports, _ = renderer.demo_data(version=version)
+                report = reports["fail"]
+                check = report["checks"][0]
+                check["requirement"] = "处理完两个任务再结束"
+                check["expected"] = "先查清两个任务的状态，再分别处理尚未完成的任务。"
+                check["observed"] = "只处理了第一个任务，第二个还没处理就结束了。"
+                report["evidence_index"][0]["excerpt"] = "不应进入页面的证据正文"
+                report["findings"][0]["claim"] = "不应进入页面的偏差判断"
+                renderer.validate_case(report, manifest)
+                page = renderer.render_case(manifest, report)
+                for text in ("检查要求", "应该怎么做", "实际做了什么", check["requirement"], check["expected"], check["observed"], "修改建议与回归验证", report["findings"][0]["suggestion"]):
+                    self.assertIn(text, page)
+                for text in ("<th>证据</th>", "证据短引用", "执行偏差与范围外背景", "设计与业务偏差", "不应进入页面的证据正文", "不应进入页面的偏差判断", check["id"] + " / " + check["requirement"]):
+                    self.assertNotIn(text, page)
 
     def test_missing_report_creates_placeholder_and_keeps_denominator(self):
         (self.root / "reports/pass.json").unlink()
@@ -306,6 +340,66 @@ class ReportTests(unittest.TestCase):
         page = renderer.render_summary(self.manifest, self.reports, self.synthesis, set())
         for text in ("部分清单，仅对已取得样本统计", "设计遵循率", "任务完成率", "unknown", "思考证据", "已可判定分析"):
             self.assertIn(text, page)
+
+    def test_agent_flow_mock_context_and_legal_block_are_not_failures(self):
+        manifest, reports, _ = renderer.demo_data()
+        report = reports["pass"]
+        context = copy.deepcopy(reports["fail"]["findings"][0])
+        context.update(id="platform-mock", scope="platform_context", claim="Mock不执行真实落盘")
+        report["findings"] = [context]
+        report["metrics"]["business_errors"] = 1
+        report["metrics"]["tool_failures"] = 1
+        report["summary"] = "首次查询不可用，按设计合法受阻，其他独立项完成。"
+        renderer.validate_manifest(manifest)
+        renderer.validate_case(report, manifest)
+        self.assertEqual(renderer.assess(manifest, report)[0], "pass")
+        self.assertIn("不评Tool是否Mock", renderer.render_case(manifest, report))
+        context["scope"] = "agent_flow"
+        self.assertEqual(renderer.assess(manifest, report)[0], "fail")
+
+    def test_agent_flow_premature_final_response_fails(self):
+        manifest, reports, _ = renderer.demo_data()
+        report = reports["pass"]
+        gate = next(c for c in report["checks"] if c["id"] == "completion_gate")
+        gate.update(status="fail", observed="仍有第二项待处理即最终结束")
+        self.assertEqual(renderer.assess(manifest, report)[0], "fail")
+        gate.update(status="unknown", evidence_refs=[])
+        self.assertEqual(renderer.assess(manifest, report)[0], "insufficient")
+
+    def test_agent_flow_requires_scope_and_specialized_checks(self):
+        manifest, reports, _ = renderer.demo_data()
+        del manifest["audit_scope"]
+        with self.assertRaises(renderer.ContractError):
+            renderer.validate_manifest(manifest)
+        manifest, reports, _ = renderer.demo_data()
+        manifest["cases"][0]["required_check_ids"].remove("completion_gate")
+        with self.assertRaises(renderer.ContractError):
+            renderer.validate_manifest(manifest)
+        manifest, reports, _ = renderer.demo_data()
+        del reports["fail"]["findings"][0]["scope"]
+        with self.assertRaises(renderer.ContractError):
+            renderer.validate_case(reports["fail"], manifest)
+        with self.assertRaisesRegex(renderer.ContractError, "schema_version"):
+            renderer.validate_case(self.reports["pass"], manifest)
+
+    def test_agent_flow_axes_remain_independent(self):
+        manifest, reports, synthesis = renderer.demo_data()
+        # fail案例执行不通过，设计与结束时机已有完整通过证据。
+        page = renderer.render_summary(manifest, reports, synthesis, set())
+        self.assertIn("设计遵循率</td><td>3 / 4", page)
+        self.assertIn("流程完成率</td><td>2 / 4", page)
+        self.assertIn("结束时机正确率</td><td>3 / 4", page)
+        self.assertIn("工具正确使用率", page)
+
+    def test_agent_flow_struggles_not_raw_counters_determine_recovery(self):
+        manifest, reports, _ = renderer.demo_data()
+        report = reports["pass"]
+        report["metrics"]["business_errors"] = 1
+        self.assertEqual(renderer.assess(manifest, report)[0], "pass")
+        report["metrics"]["retries"] = 1
+        self.assertEqual(renderer.assess(manifest, report)[0], "recovered")
+        report["struggles"] = reports["recovered"]["struggles"]
+        self.assertEqual(renderer.assess(manifest, report)[0], "recovered")
 
     def test_cli_demo_deterministic_private_synthetic(self):
         dest = self.root / "demo"

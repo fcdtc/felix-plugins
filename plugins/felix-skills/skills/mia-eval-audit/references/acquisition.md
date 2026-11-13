@@ -26,7 +26,7 @@ agent session debug --session-id <SESSION> --message-id <MESSAGE> [--offline]
 1. 先取少量record样本观察结构，读取total、实际cycle、错误、会话及运行定位；再按分页读完全部轻量清单，不展开全量debug到主线程。
 2. 使用record/data_item稳定身份建case，保存完整输入与映射；根据实际exec_cycle区分空占位与真实轮次。
 3. 对没有可靠JSON语义的改后输出/人工标注等，按需导出；同时读取耗时/token表。导出不是所有输入字段的唯一来源。
-4. 共享的指定Agent版本与固定资源只取一次，保存完整配置。Skill正文优先实际`skill_read/skill_read_file`回包；需要完整规则时补读固定组件版本及可达reference，避免拿当前草稿当历史。
+4. 指定Agent及固定Skill/Tool只取一次，保存完整可见配置；从规则写baseline/design-summary.json（主要目的、场景、职责/对象、阶段顺序、工具使用与退出条件），逐条有来源。Skill正文优先实际`skill_read/skill_read_file`回包，需要完整规则时补固定组件及reference，不拿当前草稿当历史。默认不展开Tool背后的Workflow代码来判断Mock/真实服务；仅为可见契约歧义或参数/对象关联定位按需回读，所得实现背景不进入Agent失败判定。
 5. 各worker按已知Session读取history，通过返回的message_id取得本case各轮debug，核对run/trace/目标版本；历史多页按当前help支持的游标取全必要前文。缺失某轮保留partial。
 
 完成每一步都检查平台status_info/错误，而不只检查CLI退出码。取证失败与业务失败分开记录。
