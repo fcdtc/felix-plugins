@@ -23,7 +23,7 @@ agent session history --session-id <SESSION> --limit <N>
 agent session debug --session-id <SESSION> --message-id <MESSAGE> [--offline]
 ```
 
-1. 先取少量record样本观察结构，读取total、实际cycle、错误、会话及运行定位；再按分页读完全部轻量清单，不展开全量debug到主线程。
+1. 先用 `evaluation task session-status-count` 核对任务的各 session 状态数量；默认范围为 ToEvaluate（session-status=4），不是任务全部记录。按当前 `record-list --help` 支持的 `--session-status 4` 读取少量样本并完整分页，核对筛选后的 total、去重数据项数与待评价数量；CLI不支持状态筛选时，分页取得完整轻量清单后按明确的 record/session 状态本地筛选，不能按 cycle.status 猜测。保留实际cycle、错误、会话及运行定位，不展开全量debug到主线程。
 2. 使用record/data_item稳定身份建case，保存完整输入与映射；根据实际exec_cycle区分空占位与真实轮次。
 3. 对没有可靠JSON语义的改后输出/人工标注等，按需导出；同时读取耗时/token表。导出不是所有输入字段的唯一来源。
 4. 指定Agent及固定Skill/Tool只取一次，保存完整可见配置；从规则写baseline/design-summary.json（主要目的、场景、职责/对象、阶段顺序、工具使用与退出条件），逐条有来源。Skill正文优先实际`skill_read/skill_read_file`回包，需要完整规则时补固定组件及reference，不拿当前草稿当历史。默认不展开Tool背后的Workflow代码来判断Mock/真实服务；仅为可见契约歧义或参数/对象关联定位按需回读，所得实现背景不进入Agent失败判定。
@@ -65,14 +65,14 @@ case通常用 `task_id + record_id + data_id` 定位；JSON中ID转为十进制�
 
 manifest每个case保留message_ids及私有brief中的record/data/cycle/run映射；message_id从history/debug权威返回取得，不拿run_id替代，除非平台明确返回两者相同。
 
-分页完成后核对去重数与total。total变化时按冻结截止核验差异；缺页保留scope_complete=false及scope_note。已知缺case可建证据不足占位；未知未取得的总集合不能假装是已完整列出的case。
+分页完成后核对选定范围的去重数与筛选后total，不能拿任务总量作为默认分母。acquisition.json记录各状态数量、筛选条件、排除数量及冻结截止；manifest.scope_note明确“仅待评价case”或用户指定范围，scope_complete表示该选定范围是否完整，不表示覆盖任务全部状态。计数或状态变化时按冻结截止核验差异，不静默扩大范围或删掉已冻结case；缺页保留scope_complete=false。已知选定范围内缺case可建证据不足占位；未知未取得的总集合不能假装完整。
 
 ## 私有落盘与解析安全
 
 - 每次导出/ZIP独立新建空目录，脚本位于Skill目录，不从下载目录执行解释器。Python使用`-I`。
 - 解压前检查成员路径，拒绝绝对路径、`..`、符号链接和超额尺寸；只取所需CSV/JSON/文本，不执行下载内容。
 - 原始文件保留原字节及SHA-256；派生资料另存。JSON解析保持大整数无损，所有关联键对比原始字符串；CSV用标准csv解析器，不用物理行号切case。
-- 认证token、签名下载URL和用户图片链接不写HTML或仓库。HTML使用短的去标识证据，原始思考单独保留；不把工具输出中的HTML作为模板执行。
+- 认证token不落盘；签名下载URL和用户图片链接不写HTML或Git跟踪文件，仅在取证确有必要时保留于忽略且仅当前用户可访问的私有目录。HTML不展示证据引用表；脱敏短引用及原始思考分别保留在私有JSON与证据文件中。不把工具输出中的HTML作为模板执行。
 - 跨case共享文件仅读；每个worker在自己的目录补证据。大日志先列结构/索引，再按当前检查范围读取，不把整个多case导出塞进一个代理上下文。
 
 ## 必须请求补充的边界

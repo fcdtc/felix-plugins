@@ -2,7 +2,7 @@
 name: mia-eval-audit
 description: 回读固定 MIA Agent 版本，逐 case 审计流程执行、工具使用、任务收尾与提前结束，生成汇总及详情 HTML。
 disable-model-invocation: true
-argument-hint: "Agent版本定位 + 评测任务URL [关注点] [case范围] [输出目录] [并发数]"
+argument-hint: "评测任务URL [Agent版本定位] [关注点] [case范围] [输出目录] [并发数]"
 ---
 
 # MIA Agent 执行审计
@@ -15,14 +15,14 @@ argument-hint: "Agent版本定位 + 评测任务URL [关注点] [case范围] [�
 
 ## 1. 定位目标与审计问题
 
-取得两个必需输入：
+先从用户提供的执行任务 URL 定位任务，再补齐固定目标；不要求用户分别提供两组定位信息：
 
-- **固定 Agent 版本**：设计页 URL 或 agent_id、motif_id、发布版本。agent_id 能权威回读所属 motif/发布版本时自行补齐；仅有浮动草稿或“最新版”时请求固定目标。精确草稿 agent_id+revision 仅适用于评测运行同一草稿且有完整快照。
-- **执行任务 URL**：解析 task_id、space_id。数据集 URL 没有轨迹，先用官方 CLI 查关联任务；无法唯一对应时请用户选择，不重复索要已有 ID。
+- **执行任务 URL**：解析 task_id、space_id，先用官方 `evaluation task get` 回读任务。优先从任务的 agent_eval_config.agent_id、agent_eval_config.version 和 motif_id 取得固定 Agent，再用 `agent get` 核验；能唯一定位时直接继续，不重复索要 Agent 设计链接、ID 或版本。数据集 URL 没有轨迹，先用官方 CLI 查关联任务；无法唯一对应时请用户选择。
+- **固定 Agent 版本**：用户另给设计页 URL 或 agent_id、motif_id、发布版本时复用并与任务核对；关联信息缺失、冲突或无法唯一定位时才请求最小补充。agent_id 能权威回读所属 motif/发布版本时自行补齐；仅有浮动草稿或“最新版”时请求固定目标。精确草稿 agent_id+revision 仅适用于评测运行同一草稿且有完整快照。
 
 默认关注流程、工具使用和结束时机。用户已明确关注点时直接采用；先读目标版本能解决的事实不交给用户猜。只有审计目的或成功标准仍有两种会改变判定的解释时，**在分派 case 前调用 `felix-skills:grilling`**，集中澄清关注点、什么算处理完成以及受阻如何计分；技能不可用则直接问同样的必要问题。已清楚的需求不机械 grilling，也不为平台身份信息启动 grilling。
 
-默认覆盖任务全部数据项和完整轮次；一个数据项为一个 case，重试不增加分母。默认落盘到仓库外新建私有 `mia-eval-audit-*` 目录。冻结抓取截止、版本、范围和排序；后续运行不混入分母。
+默认仅审计抓取截止时**待评价（ToEvaluate）**的 case，覆盖这些选定数据项的完整轮次；已评价、运行失败和运行中项默认排除，用户明确要求时才扩大范围。一个数据项为一个 case，重试不增加分母；筛选及数量核对见[取证规则](references/acquisition.md)。默认落盘到**执行本 skill 的目标项目**根目录的 `.eval/mia-eval-audit-<时间戳>-<唯一后缀>/`，不是本 skill 源码仓库或插件安装目录的 `.eval/`；每次新建独立私有目录，用户指定输出目录时优先采用。路径定位及 Git 忽略规则见[目录与分工](references/dispatch.md)。冻结抓取截止、版本、范围和排序；后续运行不混入分母。
 
 **完成条件：** 固定目标、任务、空间/环境、范围、私有路径和审计关注点明确。
 
@@ -34,7 +34,7 @@ argument-hint: "Agent版本定位 + 评测任务URL [关注点] [case范围] [�
 2. 写 `baseline/design-summary.json`：Agent 的主要目的、场景入口、适用职责及顺序、必需工具与使用条件、逐项结果和合法退出条件。规则附来源位置。它是设计的摘要，不是主线程对某 case 的预判。
 3. 在 manifest 的 `audit_scope` 写明 `profile=agent_flow`、关注点、Agent目的、流程收尾标准及排除项。排除项明确包含 Tool Mock/真实持久化/实际送达。每个 case 的必查项为 identity、design、tool_usage、execution、completion_gate、smoothness。
 4. 检查输入、实际Prompt、原输出、改后输出、评分评论、调用、可见思考、版本、终态与耗时覆盖；URL优先、CSV可选，只因实际缺字段请求最小补充。运行快照回答“当时看到了什么”，固定版本回答“要求什么”，差异单独记录。
-5. 按[目录与分工](references/dispatch.md)生成每 case 资料包及稳定映射；ID 全部字符串无损保存。失败、运行中或缺证项仍进 manifest。
+5. 按[目录与分工](references/dispatch.md)生成每 case 资料包及稳定映射；ID 全部字符串无损保存。manifest 只包含冻结选定范围；选入后发生取证/分析失败或缺证仍保留占位，不删分母。范围外的平台失败、运行中及已评价项不混入默认分母。
 
 **完成条件：** 有可引用的版本职责与收尾标准，不只拿到配置；清单全量或显著标记部分；每个 case 的版本关联与证据缺口明确。
 
