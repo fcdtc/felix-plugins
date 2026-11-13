@@ -68,6 +68,55 @@ Claude Code 调用示例：
 
 Codex 使用技能列表中实际发现的 `init_aixue` 显式调用。已有文档、代理规则与脚本保留并增量合并；源码入口和内部模板见 [init_aixue](plugins/felix-skills/skills/init_aixue/SKILL.md)。技能初始化不安装依赖、不提交／推送或操作平台，生成手册不代表自动部署已绑定。
 
+## 会话总结
+
+`session-summary` 仅由用户显式触发，按今天、昨天、指定日期、本周、上周或自定义时间区间，读取本机 Claude Code 与 Codex 全部项目会话，生成中文 Markdown。支持跨天续聊、压缩归档和跨平台主题归纳；系统／工具／子代理消息不作为提问。日报、周报统一采用“整体概览、重点工作、推进脉络”，时间线列为“时间、session_id、主要内容”；正文不展示日志来源、调用指令或扫描统计。读取缺口在交付回复中单独说明。
+
+Claude Code 调用示例：
+
+```text
+/felix-skills:session-summary
+/felix-skills:session-summary 昨天
+/felix-skills:session-summary 本周
+/felix-skills:session-summary 上周
+/felix-skills:session-summary 2026-11-12
+/felix-skills:session-summary 2026-11-01 至 2026-11-12
+/felix-skills:session-summary --start 2026-11-12T09:00:00+08:00 --end 2026-11-12T18:00:00+08:00
+/felix-skills:session-summary 本周 --output /absolute/path/to/summary.md
+```
+
+Codex 从技能列表中显式调用 `session-summary`，使用相同参数。所有时间统一为北京时间（UTC+08:00），无需指定时区，不受电脑系统时区影响；默认总结北京时间今天。自然周从周一开始，本周只覆盖截至扫描时间的部分。日期区间包含起止两天，精确时间区间开始含、结束不含。默认输出到当前目录 `session-summaries/`，文件名带单日日期或起止范围；已有文件保留，除非明确要求更新。也支持只返回 Markdown。记录仅在本地处理，不创建定时任务或自动上传。
+
+入口：[session-summary](plugins/felix-skills/skills/session-summary/SKILL.md)，详细语义见[时间范围规则](plugins/felix-skills/skills/session-summary/references/time-ranges.md)。需要 Python 3.9+；读取 `.jsonl.zst` 需要本机 `zstd`，缺少时继续总结可读部分并标记覆盖不完整。
+
+提取器的本地回归测试（不读取真实会话）：
+
+```bash
+python3 -I -B -m unittest discover -s plugins/felix-skills/tests -p 'test_collect_sessions.py'
+```
+
+## MIA 评测链路审计
+
+`mia-eval-audit` 仅显式调用，输入一个固定 MIA Agent 版本与评测任务 URL，适用于任意 Agent，不限定 Alfred。默认由官方 CLI 获取完整记录、按需导出和读取 Session debug；CSV 是权限、保留期限或平台外标注等缺口的可选补充，不要求用户每次手工下载。
+
+```text
+/felix-skills:mia-eval-audit Agent=<Agent设计页URL或motif_id/agent_id/固定版本> 评测=<含task_id的评测任务URL>
+/felix-skills:mia-eval-audit Agent=<固定版本定位> 评测=<任务URL> case=1-10 并发=3 输出=<私有目录>
+```
+
+每个 case 由独立子代理对照设计基线、可见思考和实际请求回包，分别分析设计遵循、任务完成及执行挣扎。默认最多并发 3 个，明确消耗模型 tokens；只读已有运行，不重新评测或修改平台。环境与身份 Header 遵循目标项目规则，不写死某个 Agent 的 PPE。
+
+固定模板输出 `site/index.html` 和 `site/cases/<case_key>.html`，支持从汇总逐项打开详情。统计由 Python 渲染器重算：顺畅通过率以全部选定 case 为分母，恢复/挣扎、不通过与证据不足分别列示；缺失 case 不被排除。默认私有本地交付，不上传真实学习内容、凭据或整段思考。
+
+入口：[mia-eval-audit](plugins/felix-skills/skills/mia-eval-audit/SKILL.md)；字段覆盖与 URL 限制见[取证规则](plugins/felix-skills/skills/mia-eval-audit/references/acquisition.md)，固定 JSON 与页面约定以[渲染器](plugins/felix-skills/skills/mia-eval-audit/scripts/render_report.py)的校验及 `demo` 生成的合成 JSON 为准。
+
+纯合成模板预览与本地测试，不调用 MIA 或模型：
+
+```bash
+python3 -I -B plugins/felix-skills/skills/mia-eval-audit/scripts/render_report.py demo --out /private/tmp/mia-eval-demo-new
+python3 -I -B -m unittest discover -s plugins/felix-skills/tests -p 'test_mia_eval_report.py'
+```
+
 ## 双平台 manifest
 
 插件根同时维护两份原生 manifest：

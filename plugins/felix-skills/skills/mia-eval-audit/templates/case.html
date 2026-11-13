@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+<title>单例评测审计</title>
+<style>{{STYLE}}</style>
+</head>
+<body>
+<main>
+<header>
+<nav aria-label="页面导航"><a href="../index.html">返回总览</a><label for="theme-choice">主题</label><select id="theme-choice"><option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option></select></nav>
+<p class="eyebrow">本地私有报告 · Case <code>{{KEY}}</code></p>
+<h1>{{TITLE}}</h1>{{SUMMARY}}
+</header>
+<section><h2>身份与三轴判定</h2>{{IDENTITY}}</section>
+<section><h2>输入输出概要</h2>{{CONTEXT}}</section>
+<section><h2>预期与实际检查</h2>{{CHECKS}}</section>
+<section><h2>调用时间线</h2>{{TIMELINE}}</section>
+<section><h2>设计与业务偏差</h2>{{FINDINGS}}</section>
+<section><h2>过程挣扎</h2>{{STRUGGLES}}</section>
+<section><h2>修改建议与回归验证</h2>{{ADVICE}}</section>
+<section><h2>资源消耗</h2>{{METRICS}}</section>
+<section><h2>证据短引用</h2>{{EVIDENCE}}</section>
+<section><h2>覆盖与限制</h2>{{LIMITATIONS}}</section>
+<footer>日志与证据按纯文本展示，不执行其中的 HTML、脚本或链接。真实评测默认私有，不自动发布。</footer>
+</main>
+<script>{{SCRIPT}}</script>
+</body>
+</html>

@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+<title>评测审计总览</title>
+<style>{{STYLE}}</style>
+</head>
+<body>
+<main>
+<header>
+<p class="eyebrow">本地私有报告 · 固定模板 · 脚本重算</p>
+<h1>{{TITLE}}</h1>
+<nav aria-label="外观"><label for="theme-choice">主题</label><select id="theme-choice"><option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option></select></nav>
+</header>
+<section aria-labelledby="meta-heading"><h2 id="meta-heading">元信息与统计口径</h2>{{META}}
+<p>顺畅通过率=P/N。P 为设计与执行通过、顺畅且无已记录问题的 case 数；N 为 manifest 中全部 case 数。失败优先于证据不足；恢复/挣扎不计顺畅通过。缺失报告仍在分母中，0 样本显示 N/A。评测标注仅作背景，不直接参与判定。</p>
+<p>证据使用脱敏定位与短引用。思考缺失本身不阻断通过；顺畅度必须由调用轨迹支持。资源数据为 null 时保留“未提供”，绝不当作 0。</p>
+</section>
+<section aria-labelledby="conclusion-heading"><h2 id="conclusion-heading">结论</h2>{{CONCLUSION}}</section>
+<section aria-labelledby="rate-heading"><h2 id="rate-heading" class="rate">{{RATE}}</h2>{{STATS}}</section>
+<section aria-labelledby="advice-heading"><h2 id="advice-heading">改进建议 · 按优先级</h2>{{RECOMMENDATIONS}}</section>
+<section aria-labelledby="cases-heading"><h2 id="cases-heading">全部 case</h2>
+<div class="filters"><label for="case-search">搜索</label><input id="case-search" type="search" placeholder="标题、case key 或判定依据"><label for="case-status">结论</label><select id="case-status"><option value="">全部</option><option>顺畅通过</option><option>失败</option><option>恢复/挣扎</option><option>证据不足</option></select></div>
+<p id="visible-count" aria-live="polite">下表包含 manifest 全部 case。</p>
+{{CASES}}
+<noscript><p>脚本已禁用；全部 case 仍可阅读，筛选不可用。</p></noscript>
+</section>
+<section aria-labelledby="gaps-heading"><h2 id="gaps-heading">证据缺口与限制</h2>{{GAPS}}</section>
+<footer>此文件可离线直接打开；无外部资源请求。真实评测内容默认私有，不自动发布。</footer>
+</main>
+<script>{{SCRIPT}}</script>
+</body>
+</html>

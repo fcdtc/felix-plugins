@@ -1,0 +1,5 @@
+interface:
+  display_name: "MIA 评测链路审计"
+  short_description: "逐 case 独立核对指定 Agent 版本的设计遵循与执行挣扎，生成固定 HTML 报告"
+policy:
+  allow_implicit_invocation: false

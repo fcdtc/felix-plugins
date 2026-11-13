@@ -1,0 +1,5 @@
+interface:
+  display_name: "会话总结"
+  short_description: "按日、周或自定义时间范围汇总 Claude Code 与 Codex 提问"
+policy:
+  allow_implicit_invocation: false

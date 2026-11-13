@@ -16,6 +16,13 @@
     "codebase-query": {"support": "claude-and-codex"},
     "codebase-tutor": {"support": "claude-and-codex"},
     "create-verification-skill": {"support": "claude-and-codex"},
+    "session-summary": {
+      "support": "claude-and-codex",
+      "environment_requirements": [
+        "Python 3.9 or newer and read access to local Claude Code or Codex session logs",
+        "zstd CLI when scanning .jsonl.zst logs; unavailable compression support is reported as incomplete coverage"
+      ]
+    },
     "diagnosing-bugs": {"support": "claude-and-codex"},
     "domain-modeling": {"support": "claude-and-codex"},
     "eli5": {"support": "claude-and-codex"},
@@ -43,6 +50,14 @@
       "requires": ["writing-for-agents"],
       "environment_requirements": [
         "操作 MIA 平台时需安装官方 miacli skill 及其所需 CLI，并具有目标空间访问权限；仅本地设计不要求平台访问"
+      ]
+    },
+    "mia-eval-audit": {
+      "support": "claude-and-codex",
+      "environment_requirements": [
+        "官方 miacli skill、其支持的 pony-mia CLI 与目标 MIA 空间只读访问权限",
+        "宿主支持逐 case 独立子代理；默认并发上限 3，分析消耗模型 tokens",
+        "Python 3.9 或更新版本用于确定性 HTML 渲染与统计；浏览器可直接打开本地报告"
       ]
     },
     "note": {"support": "claude-and-codex"},
