@@ -49,7 +49,7 @@
       "support": "claude-and-codex",
       "requires": ["writing-for-agents"],
       "environment_requirements": [
-        "操作 MIA 平台时需安装官方 miacli skill 及其所需 CLI，并具有目标空间访问权限；仅本地设计不要求平台访问"
+        "按 Agent ID 获取基线或同步 MIA 时需安装官方 miacli skill 及其所需 CLI，并具有目标空间相应访问权限；本地交付既有 Agent 修改仍需只读访问，离线新建设计不要求平台访问；本地交付需对执行项目的 .design/ 目录有写权限"
       ]
     },
     "mia-eval-audit": {

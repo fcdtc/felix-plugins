@@ -1,5 +1,5 @@
 interface:
   display_name: "MIA Agent 链路设计"
-  short_description: "创建与优化 MIA Agent 的上下文、Prompt、Skill、Tool 契约及验收流程"
+  short_description: "按 Agent ID 获取六类配置，优化链路并交付项目 .design/ 或授权同步"
 policy:
   allow_implicit_invocation: false
