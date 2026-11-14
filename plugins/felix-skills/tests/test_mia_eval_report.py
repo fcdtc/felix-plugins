@@ -11,7 +11,7 @@ import unittest
 from html.parser import HTMLParser
 from unittest import mock
 
-SCRIPT = Path(__file__).resolve().parents[1] / "skills/mia-eval-audit/scripts/render_report.py"
+SCRIPT = Path(__file__).resolve().parents[1] / "skills/mia-eval/scripts/render_report.py"
 SPEC = importlib.util.spec_from_file_location("mia_eval_render_report", SCRIPT)
 renderer = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(renderer)

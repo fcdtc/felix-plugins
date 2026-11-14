@@ -111,23 +111,23 @@ python3 -I -B -m unittest discover -s plugins/felix-skills/tests -p 'test_collec
 
 ## MIA 评测链路审计
 
-`mia-eval-audit` 仅显式调用，输入一个固定 MIA Agent 版本与评测任务 URL，适用于任意 Agent，不限定 Alfred。默认由官方 CLI 获取完整记录、按需导出和读取 Session debug；CSV 是权限、保留期限或平台外标注等缺口的可选补充，不要求用户每次手工下载。
+`mia-eval` 仅显式调用，输入一个固定 MIA Agent 版本与评测任务 URL，适用于任意 Agent，不限定 Alfred。默认由官方 CLI 获取完整记录、按需导出和读取 Session debug；CSV 是权限、保留期限或平台外标注等缺口的可选补充，不要求用户每次手工下载。
 
 ```text
-/felix-skills:mia-eval-audit Agent=<Agent设计页URL或motif_id/agent_id/固定版本> 评测=<含task_id的评测任务URL>
-/felix-skills:mia-eval-audit Agent=<固定版本定位> 评测=<任务URL> case=1-10 并发=3 输出=<私有目录>
+/felix-skills:mia-eval Agent=<Agent设计页URL或motif_id/agent_id/固定版本> 评测=<含task_id的评测任务URL>
+/felix-skills:mia-eval Agent=<固定版本定位> 评测=<任务URL> case=1-10 并发=3 输出=<私有目录>
 ```
 
 每个 case 由独立子代理对照设计基线、可见思考和实际请求回包，分别分析设计遵循、任务完成及执行挣扎。默认最多并发 3 个，明确消耗模型 tokens；只读已有运行，不重新评测或修改平台。环境与身份 Header 遵循目标项目规则，不写死某个 Agent 的 PPE。
 
 固定模板输出 `site/index.html` 和 `site/cases/<case_key>.html`，支持从汇总逐项打开详情。统计由 Python 渲染器重算：顺畅通过率以全部选定 case 为分母，恢复/挣扎、不通过与证据不足分别列示；缺失 case 不被排除。默认私有本地交付，不上传真实学习内容、凭据或整段思考。
 
-入口：[mia-eval-audit](plugins/felix-skills/skills/mia-eval-audit/SKILL.md)；字段覆盖与 URL 限制见[取证规则](plugins/felix-skills/skills/mia-eval-audit/references/acquisition.md)，固定 JSON 与页面约定以[渲染器](plugins/felix-skills/skills/mia-eval-audit/scripts/render_report.py)的校验及 `demo` 生成的合成 JSON 为准。
+入口：[mia-eval](plugins/felix-skills/skills/mia-eval/SKILL.md)；字段覆盖与 URL 限制见[取证规则](plugins/felix-skills/skills/mia-eval/references/acquisition.md)，固定 JSON 与页面约定以[渲染器](plugins/felix-skills/skills/mia-eval/scripts/render_report.py)的校验及 `demo` 生成的合成 JSON 为准。
 
 纯合成模板预览与本地测试，不调用 MIA 或模型：
 
 ```bash
-python3 -I -B plugins/felix-skills/skills/mia-eval-audit/scripts/render_report.py demo --out /private/tmp/mia-eval-demo-new
+python3 -I -B plugins/felix-skills/skills/mia-eval/scripts/render_report.py demo --out /private/tmp/mia-eval-demo-new
 python3 -I -B -m unittest discover -s plugins/felix-skills/tests -p 'test_mia_eval_report.py'
 ```
 

@@ -8,7 +8,7 @@
 
 ```bash
 python3 -I -B -m unittest discover -s plugins/felix-skills/tests -p 'test_mia_eval_report.py'
-python3 -I -B plugins/felix-skills/skills/mia-eval-audit/scripts/render_report.py demo --out /private/tmp/mia-eval-demo-new
+python3 -I -B plugins/felix-skills/skills/mia-eval/scripts/render_report.py demo --out /private/tmp/mia-eval-demo-new
 python3 scripts/validate-skills.py
 claude plugin validate ./plugins/felix-skills
 git diff --check

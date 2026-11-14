@@ -1,5 +1,5 @@
 ---
-name: mia-agent-design
+name: mia-design
 description: 创建与优化 MIA Agent 链路，按 Agent ID 获取 Prompt、Skill、Tool 及补充提示词；支持项目 .design/ 本地交付或授权同步，平台操作交给 miacli。
 disable-model-invocation: true
 ---

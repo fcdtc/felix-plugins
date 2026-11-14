@@ -1,5 +1,5 @@
 ---
-name: mia-eval-audit
+name: mia-eval
 description: 回读固定 MIA Agent 版本，逐 case 审计流程执行、工具使用、任务收尾与提前结束，生成汇总及详情 HTML。
 disable-model-invocation: true
 argument-hint: "评测任务URL [Agent版本定位] [关注点] [case范围] [输出目录] [并发数]"
@@ -22,7 +22,7 @@ argument-hint: "评测任务URL [Agent版本定位] [关注点] [case范围] [�
 
 默认关注流程、工具使用和结束时机。用户已明确关注点时直接采用；先读目标版本能解决的事实不交给用户猜。只有审计目的或成功标准仍有两种会改变判定的解释时，**在分派 case 前调用 `felix-skills:grilling`**，集中澄清关注点、什么算处理完成以及受阻如何计分；技能不可用则直接问同样的必要问题。已清楚的需求不机械 grilling，也不为平台身份信息启动 grilling。
 
-默认仅审计抓取截止时**待评价（ToEvaluate）**的 case，覆盖这些选定数据项的完整轮次；已评价、运行失败和运行中项默认排除，用户明确要求时才扩大范围。一个数据项为一个 case，重试不增加分母；筛选及数量核对见[取证规则](references/acquisition.md)。默认落盘到**执行本 skill 的目标项目**根目录的 `.eval/mia-eval-audit-<时间戳>-<唯一后缀>/`，不是本 skill 源码仓库或插件安装目录的 `.eval/`；每次新建独立私有目录，用户指定输出目录时优先采用。路径定位及 Git 忽略规则见[目录与分工](references/dispatch.md)。冻结抓取截止、版本、范围和排序；后续运行不混入分母。
+默认仅审计抓取截止时**待评价（ToEvaluate）**的 case，覆盖这些选定数据项的完整轮次；已评价、运行失败和运行中项默认排除，用户明确要求时才扩大范围。一个数据项为一个 case，重试不增加分母；筛选及数量核对见[取证规则](references/acquisition.md)。默认落盘到**执行本 skill 的目标项目**根目录的 `.eval/mia-eval-<时间戳>-<唯一后缀>/`，不是本 skill 源码仓库或插件安装目录的 `.eval/`；每次新建独立私有目录，用户指定输出目录时优先采用。路径定位及 Git 忽略规则见[目录与分工](references/dispatch.md)。冻结抓取截止、版本、范围和排序；后续运行不混入分母。
 
 **完成条件：** 固定目标、任务、空间/环境、范围、私有路径和审计关注点明确。
 
