@@ -1,5 +1,5 @@
 interface:
-  display_name: "Skill 复盘优化"
-  short_description: "手动复盘当前会话的执行与表达问题，依据真实证据改进目标 Skill"
+  display_name: "Skill 复盘"
+  short_description: "依据会话证据提出目标 Skill 的问题与修改建议，由用户选择修改范围"
 policy:
   allow_implicit_invocation: false

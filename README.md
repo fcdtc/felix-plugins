@@ -95,19 +95,20 @@ Codex 从技能列表中显式调用 `session-summary`，使用相同参数。�
 python3 -I -B -m unittest discover -s plugins/felix-skills/tests -p 'test_collect_sessions.py'
 ```
 
-## Skill 复盘优化
+## Skill 复盘
 
-`skill-retro` 仅由用户显式触发。在新会话中先用待优化 Skill 执行真实任务，再在同一会话调用它；它依据工具调用、结果、用户纠正和产物，分别检查执行与表达问题，默认直接修改目标 Skill 的本地维护源。
+`skill-retro` 仅由用户显式触发。先用目标 Skill 执行真实任务，再在同一会话调用它；它依据工具调用、结果、用户纠正和产物，检查执行与表达问题，按影响排序提出带编号的修改建议，先交付清单，保持目标文件不变。
 
 ```text
 /felix-skills:skill-retro
-/felix-skills:skill-retro 优化 <skill 名称或路径>，重点看重复探索和交付表达
-/felix-skills:skill-retro 只分析 <skill 名称或路径>，暂不修改
+/felix-skills:skill-retro 复盘 <skill 名称或路径>，重点看重复探索和交付表达
 ```
 
-未指定目标且执行记录能唯一定位时自动选择，否则询问。Codex 从技能列表显式调用 `skill-retro`，使用相同要求。默认复用当前上下文，仅在必要时定向补读本次任务日志；不扫描无关会话，不自动重跑原任务或上传记录。修改后运行仓库校验，并对原问题和相邻场景做静态走查；静态检查与实跑结果分开报告。
+收到建议后，在当前对话回复“只改第 1、3 项”“只调整交付表达”或“按建议全部修改”，明确选择后才实施；也可以回复“暂不修改”。调用中的“优化”或关注方向仅限定复盘范围，不代表批准未展示的改动。每项建议说明问题、证据、归因、拟改位置和预期行为；证据不足或当前版本已修复时说明本轮无需修改。
 
-入口：[skill-retro](plugins/felix-skills/skills/skill-retro/SKILL.md)。借鉴 `retro` 的证据驱动复盘方法，聚焦目标 Skill，而非扩展成全局环境审计；写作方法复用 `writing-for-agents`。
+未指定目标且执行记录能唯一定位时自动选择，否则询问。Codex 从技能列表显式调用 `skill-retro`，使用相同要求。默认复用当前上下文，仅在必要时定向补读本次任务日志；不扫描无关会话，不自动重跑原任务或上传记录。选定后的修改按仓库规范校验，并对原问题和相邻场景做静态走查；静态检查与实跑结果分开报告。
+
+入口：[skill-retro](plugins/felix-skills/skills/skill-retro/SKILL.md)，选定后的流程见[实施已选建议](plugins/felix-skills/skills/skill-retro/references/apply-selected.md)。借鉴 `retro` 的证据驱动复盘方法，聚焦目标 Skill，而非扩展成全局环境审计；写作方法复用 `writing-for-agents`。
 
 ## MIA Agent 链路设计
 
