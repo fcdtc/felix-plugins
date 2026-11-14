@@ -95,6 +95,20 @@ Codex 从技能列表中显式调用 `session-summary`，使用相同参数。�
 python3 -I -B -m unittest discover -s plugins/felix-skills/tests -p 'test_collect_sessions.py'
 ```
 
+## Skill 复盘优化
+
+`skill-retro` 仅由用户显式触发。在新会话中先用待优化 Skill 执行真实任务，再在同一会话调用它；它依据工具调用、结果、用户纠正和产物，分别检查执行与表达问题，默认直接修改目标 Skill 的本地维护源。
+
+```text
+/felix-skills:skill-retro
+/felix-skills:skill-retro 优化 <skill 名称或路径>，重点看重复探索和交付表达
+/felix-skills:skill-retro 只分析 <skill 名称或路径>，暂不修改
+```
+
+未指定目标且执行记录能唯一定位时自动选择，否则询问。Codex 从技能列表显式调用 `skill-retro`，使用相同要求。默认复用当前上下文，仅在必要时定向补读本次任务日志；不扫描无关会话，不自动重跑原任务或上传记录。修改后运行仓库校验，并对原问题和相邻场景做静态走查；静态检查与实跑结果分开报告。
+
+入口：[skill-retro](plugins/felix-skills/skills/skill-retro/SKILL.md)。借鉴 `retro` 的证据驱动复盘方法，聚焦目标 Skill，而非扩展成全局环境审计；写作方法复用 `writing-for-agents`。
+
 ## MIA 评测链路审计
 
 `mia-eval-audit` 仅显式调用，输入一个固定 MIA Agent 版本与评测任务 URL，适用于任意 Agent，不限定 Alfred。默认由官方 CLI 获取完整记录、按需导出和读取 Session debug；CSV 是权限、保留期限或平台外标注等缺口的可选补充，不要求用户每次手工下载。

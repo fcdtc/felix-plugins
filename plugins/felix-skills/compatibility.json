@@ -83,6 +83,7 @@
     "retro": {"support": "claude-and-codex"},
     "setup-matt-pocock-skills": {"support": "claude-and-codex"},
     "show-me": {"support": "claude-and-codex"},
+    "skill-retro": {"support": "claude-and-codex", "requires": ["writing-for-agents"]},
     "tdd": {"support": "claude-and-codex"},
     "teach": {"support": "claude-and-codex"},
     "to-questionnaire": {"support": "claude-and-codex"},
