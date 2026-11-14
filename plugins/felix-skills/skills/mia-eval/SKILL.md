@@ -36,7 +36,9 @@ argument-hint: "评测任务URL [Agent版本定位] [关注点] [case范围] [�
 
 默认仅审计抓取截止时**待评价（ToEvaluate）**的 case，覆盖这些选定数据项的完整轮次；已评价、运行失败和运行中项默认排除，用户明确要求时才扩大范围。一个数据项为一个 case，重试不增加分母；筛选及数量核对见[取证规则](references/acquisition.md)。默认落盘到**执行本 skill 的目标项目**根目录的 `.eval/mia-eval-<时间戳>-<唯一后缀>/`，不是本 skill 源码仓库或插件安装目录的 `.eval/`；每次新建独立私有目录，用户指定输出目录时优先采用。路径定位及 Git 忽略规则见[目录与分工](references/dispatch.md)。冻结抓取截止、版本、范围和排序；后续运行不混入分母。
 
-**完成条件：** 固定目标、任务、空间/环境、范围、私有路径和审计关注点明确。
+创建私有目录后、读取引用及分派前，执行 `scripts/prepare_audit.py freeze`，把本轮 Skill、引用、脚本及模板固定到 `RUN_DIR/runtime/skill/`，记录哈希；本次已选补充规则用 `--scope-file` 一并固定。核对入口正文与本会话实际加载版本一致；不一致时先保留已加载正文并明确差异，分派前重新加载一致版本或恢复完整对应资源，不拼接不同版本，也不从 Git HEAD 推定执行版本。随后只读该快照，worker、校验和汇总使用其中的脚本，源码后续更新不混入本轮。命令及目录见[目录与分工](references/dispatch.md)。
+
+**完成条件：** 固定目标、任务、空间/环境、范围、私有路径和审计关注点明确；本轮审计规则、补充口径、报告契约及模板已固定。
 
 ## 2. 回读版本，先理解设计
 
@@ -44,7 +46,7 @@ argument-hint: "评测任务URL [Agent版本定位] [关注点] [case范围] [�
 
 1. 回读**指定版本**的完整 System、User 模板、附加 Skill/Tool Prompt、输入输出 Schema、模型配置和固定 Skill/reference。共享基线只取一次，保存原文件与 SHA-256。草稿/最新文档不能覆盖历史基线。
 2. 写 `baseline/design-summary.json`：Agent 的主要目的、场景入口、适用职责及顺序、必需工具与使用条件、逐项结果和合法退出条件。规则附来源位置。它是设计的摘要，不是主线程对某 case 的预判。
-3. 在 manifest 的 `audit_scope` 写明 `profile=agent_flow`、关注点、Agent目的、流程收尾标准及排除项。排除项明确包含 Tool Mock/真实持久化/实际送达。每个 case 的必查项为 identity、design、tool_usage、execution、completion_gate、smoothness。
+3. 在 manifest 的 `audit_scope` 写明 `profile=agent_flow`、关注点、Agent目的、流程收尾标准及排除项。排除项明确包含 Tool Mock/真实持久化/实际送达。每个 case 的必查项为 identity、design、tool_usage、execution、completion_gate、smoothness。分派前形成统一 `baseline/audit-brief.json`：区分固定 Agent 的业务要求与本次审计关注点，引用已固定的补充规则及[分轴判定](references/audit-rubric.md)。用户明确口径限定本次评什么，不改写历史版本职责；无法消解的冲突按第1步处理。
 4. 检查输入、实际Prompt、原输出、改后输出、评分评论、调用、可见思考、版本、终态与耗时覆盖；URL优先、CSV可选，只因实际缺字段请求最小补充。运行快照回答“当时看到了什么”，固定版本回答“要求什么”，差异单独记录。
 5. 按[目录与分工](references/dispatch.md)生成每 case 资料包及稳定映射；ID 全部字符串无损保存。manifest 只包含冻结选定范围；选入后发生取证/分析失败或缺证仍保留占位，不删分母。范围外的平台失败、运行中及已评价项不混入默认分母。
 
@@ -52,17 +54,17 @@ argument-hint: "评测任务URL [Agent版本定位] [关注点] [case范围] [�
 
 ## 3. 逐 case 独立审计
 
-读取[审计标准](references/audit-rubric.md)、[分工模板](references/dispatch.md)及[渲染器](scripts/render_report.py)校验/demo。每 case 启动全新子代理，返修复用原代理。交付自己的完整输入、共享设计摘要和基线，不附其他 case 结论或主线程预判。
+主线程读取已固定的[审计标准](references/audit-rubric.md)、[分工模板](references/dispatch.md)及[渲染器](scripts/render_report.py)校验/demo。worker 使用冻结步骤生成的精简报告契约、合成示例和本次 `audit-brief.json`，按适用规则指针读取原文，不要求每例重读渲染器实现。每 case 启动全新子代理，返修复用原代理。交付自己的完整输入、共享设计摘要和基线，不附其他 case 结论或主线程预判。
 
 每个 worker：
 
-1. 按需用官方 CLI 补齐本 case history/debug，先索引大日志再按检查范围读取，避免反复展开整包。
+1. 启动即回传自己的 `case_key` 和展示序号，由主线程核对代理映射。取得本 case history 后，用已固定的 `scripts/prepare_audit.py packet` 生成字段与调用索引；只有索引指出关键字段缺失时才补对应 message 的 debug。完整输入和全部实际调用必读，思考和累计 Prompt 按定位读取，避免重复拉取和展开。
 2. 按本轮场景列出全部应处理对象与阶段，逐项对照规则、实际工具请求、回包及后续行为。
 3. 专项检查正确工具与参数、分页/对象关联、成功和失败回包处理、独立项继续，以及**最终 response 前是否已处理完全部职责**。区分阶段进度文本与真正结束。
 4. 用可见思考解释误读、返工和决策反复；合理验算不算挣扎，缺失思考不编造。
 5. 写 `reports/<case_key>.json`，用固定渲染器生成 `site/cases/<case_key>.html`；回传三轴结论、重要发现/缺口及路径。原始日志留私有目录。
 
-主线程按本轮并发数 N 持续补位，不等待整批完成；运行限制的处理见[调度规则](references/dispatch.md)。不重读 worker 全量日志。失败有限重试一次；仍失败保留证据不足占位，不删分母。
+主线程按本轮并发数 N 持续补位，不等待整批完成；用 `scripts/dispatch_queue.py` 统一记录初审、返修和预占槽位。已知宿主容量后按实际空槽位分派，不按并发工具结果的位置猜代理与 case 的对应关系；运行限制及完成通知处理见[调度规则](references/dispatch.md)。不重读 worker 全量日志。失败有限重试一次；仍失败保留证据不足占位，不删分母。
 
 **完成条件：** 每个选定 case 都有独立结果或失败占位；每个应处理项有结果或合法退出依据；提前结束检查有最终事件与未完成项证据；Mock 不形成 Agent 失败理由。
 

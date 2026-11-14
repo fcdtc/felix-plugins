@@ -27,9 +27,25 @@ agent session debug --session-id <SESSION> --message-id <MESSAGE> [--offline]
 2. 使用record/data_item稳定身份建case，保存完整输入与映射；根据实际exec_cycle区分空占位与真实轮次。
 3. 对没有可靠JSON语义的改后输出/人工标注等，按需导出；同时读取耗时/token表。导出不是所有输入字段的唯一来源。
 4. 指定Agent及固定Skill/Tool只取一次，保存完整可见配置；从规则写baseline/design-summary.json（主要目的、场景、职责/对象、阶段顺序、工具使用与退出条件），逐条有来源。Skill正文优先实际`skill_read/skill_read_file`回包，需要完整规则时补固定组件及reference，不拿当前草稿当历史。默认不展开Tool背后的Workflow代码来判断Mock/真实服务；仅为可见契约歧义或参数/对象关联定位按需回读，所得实现背景不进入Agent失败判定。
-5. 各worker按已知Session读取history，通过返回的message_id取得本case各轮debug，核对run/trace/目标版本；历史多页按当前help支持的游标取全必要前文。缺失某轮保留partial。
+5. 各worker按已知Session读取history，通过权威message_id关联本case全部轮次。先用下面的 `packet` 生成字段覆盖索引；history 已包含完整身份、Prompt、调用、终态及 usage 时直接复用。仅对 `needs_debug_message_ids` 指出的缺项调用官方debug，再用新派生目录合并；不无条件重复获取已在history中的debug。历史多页按当前help支持的游标取全必要前文，has_more未清零保留partial。
 
 完成每一步都检查平台status_info/错误，而不只检查CLI退出码。取证失败与业务失败分开记录。
+
+## 单例精简资料包
+
+已取得的官方响应原样留存；派生脚本只读本例文件，不访问网络、不调用模型。先检查当前环境help，使用本轮冻结脚本：
+
+```bash
+python3 -I -B "$FROZEN_SKILL_ROOT/scripts/prepare_audit.py" packet \
+  --history "$RUN_DIR/evidence/<case_key>/history.json" \
+  --out "$RUN_DIR/evidence/<case_key>/packet-001"
+```
+
+必要debug补回后重复 `--debug <本例debug文件>`，输出到新的 `packet-002`，不覆盖原始证据或上一份派生资料。`index.json` 列出全部权威消息、字段缺口、必要前文分页状态及 `needs_debug_message_ids`；错会话/消息不强行合并，缺证保留。无message_id时先从官方history补身份，不由run推测。
+
+worker首先读索引、完整本例输入及全部实际工具请求/回包。调用和终态按事件去重，usage只取可确认的单份快照、不叠加累计值。思考按条索引及文件按需读取；首个模型Prompt留可引用文件，其余累计message_list只列原始定位、结构和哈希，确需核验该轮时再读取源片段。自然语言和图片引用保持原样，不靠递归JSON解析或摘要裁剪改变语义。
+
+**完成条件：** 本例完整输入、全部真实轮次调用与终态可定位；明确哪些字段已充分、哪些需补查。thinking缺失本身不要求重复debug；必要字段未知不能因精简资料包改成pass。主线程只需覆盖索引，不批量展开所有case的history/debug；完整原规则按适用分支可读取。
 
 ## URL 能否代替 CSV
 
@@ -63,7 +79,7 @@ case通常用 `task_id + record_id + data_id` 定位；JSON中ID转为十进制�
 
 同一数据项多个独立评测配置先按用户指定目标筛选，记录排除原因；同一目标下多轮全部进入同一case。真正的重新运行/尝试保留attempt身份和原结果，冻结截止时按平台明确选定结果确定评测对象，并展示其他尝试；平台不能明确时标关联不确定，不挑最好一次。多轮/重跑语义必须用实际任务样本核验，不能把单轮观察当永久协议。
 
-manifest每个case保留message_ids及私有brief中的record/data/cycle/run映射；message_id从history/debug权威返回取得，不拿run_id替代，除非平台明确返回两者相同。
+manifest每个case保留message_ids及私有brief中的record/data/cycle/run映射；message_id从history消息或其内嵌debug明确的message_id取得，不拿run_id或message_indexes的标量索引替代。索引仅用于分页定位；必要身份不存在时保留缺口，不据字符串形似ID自行补造。
 
 分页完成后核对选定范围的去重数与筛选后total，不能拿任务总量作为默认分母。acquisition.json记录各状态数量、筛选条件、排除数量及冻结截止；manifest.scope_note明确“仅待评价case”或用户指定范围，scope_complete表示该选定范围是否完整，不表示覆盖任务全部状态。计数或状态变化时按冻结截止核验差异，不静默扩大范围或删掉已冻结case；缺页保留scope_complete=false。已知选定范围内缺case可建证据不足占位；未知未取得的总集合不能假装完整。
 

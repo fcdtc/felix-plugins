@@ -465,6 +465,18 @@ class ReportTests(unittest.TestCase):
         self.assertIn("结束时机正确率</td><td>3 / 4", page)
         self.assertIn("工具正确使用率", page)
 
+    def test_axis_examples_distinguish_admission_closure_and_prefetch(self):
+        examples = {e["id"]: e for e in renderer.axis_examples()}
+        admission = examples["admission-fails-but-closed"]
+        self.assertEqual(admission["classification"], "fail")
+        self.assertEqual(admission["verdict"], {"design": "fail", "execution": "pass", "smoothness": "smooth"})
+        self.assertEqual(admission["check_statuses"]["tool_usage"], "fail")
+        self.assertEqual(admission["check_statuses"]["completion_gate"], "pass")
+        unfinished = examples["unfinished-item"]
+        self.assertEqual(unfinished["verdict"]["execution"], "fail")
+        self.assertEqual(unfinished["check_statuses"]["completion_gate"], "fail")
+        self.assertEqual(examples["rule-prefetch"]["classification"], "pass")
+
     def test_agent_flow_struggles_not_raw_counters_determine_recovery(self):
         manifest, reports, _ = renderer.demo_data()
         report = reports["pass"]

@@ -560,6 +560,39 @@ def demo_data(version=2):
     return manifest, reports, synthesis
 
 
+def axis_examples():
+    """匿名交叉判定示例；不改变既有demo四类样本与统计。"""
+    manifest, reports, _ = demo_data(version=2)
+    report = copy.deepcopy(reports["pass"])
+    report["summary"] = "查重失败后仍新增内容，但生成和通知均有结果，没有其他事项遗漏。"
+    report["verdict"]["design"] = "fail"
+    for check in report["checks"]:
+        if check["id"] in ("design", "tool_usage"):
+            check.update(status="fail", expected="新增前取得必要查重依据", observed="查重失败后仍新增并通知")
+    report["findings"] = [dict(reports["fail"]["findings"][0], id="f-admission", claim="新增前未取得必要查重依据", expected="查重结果允许后新增", observed="查重失败仍新增", impact="可能重复提供内容", suggestion="保留缺口并停止依赖动作", regression="缺必要依据时不新增")]
+    report["evidence_index"][0]["excerpt"] = "合成事件：查重失败；随后生成saved、通知success；没有其他事项。"
+    report["timeline"][0].update(action="合成生成及通知", result="saved及success，所有已选事项收尾")
+    admission = copy.deepcopy(report)
+    unfinished = copy.deepcopy(report)
+    unfinished["summary"] = "查重失败仍新增第一项，第二项尚未处理就结束。"
+    unfinished["verdict"]["execution"] = "fail"
+    for check in unfinished["checks"]:
+        if check["id"] in ("execution", "completion_gate"):
+            check.update(status="fail", expected="处理完全部独立项再结束", observed="第二项尚未处理就最终结束")
+    unfinished["evidence_index"][0]["excerpt"] = "合成事件：第一项通知完成；第二项可执行但未处理；最终结束。"
+    prefetch = copy.deepcopy(reports["pass"])
+    prefetch["summary"] = "先预读通知规则，实际发送等待生成成功后才执行。"
+    prefetch["timeline"][0].update(action="合成规则预读、生成及通知", result="预读无业务动作；生成saved后通知success")
+    prefetch["evidence_index"][0]["excerpt"] = "合成顺序：skill_read；生成saved；push成功；最终结束。"
+    examples = []
+    for key, item in (("admission-fails-but-closed", admission), ("unfinished-item", unfinished), ("rule-prefetch", prefetch)):
+        validate_case(item, manifest)
+        examples.append({"id": key, "description": item["summary"], "verdict": item["verdict"],
+                         "check_statuses": {c["id"]: c["status"] for c in item["checks"]},
+                         "classification": assess(manifest, item)[0]})
+    return examples
+
+
 def demo_command(args):
     out = Path(args.out).absolute()
     no_symlink(out)

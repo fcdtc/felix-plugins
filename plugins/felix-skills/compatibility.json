@@ -60,7 +60,7 @@
       "environment_requirements": [
         "官方 miacli skill、其支持的 pony-mia CLI 与目标 MIA 空间只读访问权限",
         "宿主支持逐 case 独立子代理；默认并发 3，用户指定时按指定并发数执行，分析消耗模型 tokens",
-        "Python 3.9 或更新版本用于确定性 HTML 渲染与统计；浏览器可直接打开本地报告"
+        "Python 3.9 或更新版本及标准库用于运行资源冻结、单例取证索引、调度记账、确定性 HTML 渲染与统计；浏览器可直接打开本地报告"
       ]
     },
     "note": {"support": "claude-and-codex"},
