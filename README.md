@@ -144,7 +144,7 @@ python3 -I -B -m unittest discover -s plugins/felix-skills/tests -p 'test_mia_de
 /felix-skills:mia-eval Agent=<固定版本定位> 评测=<任务URL> case=1-10 并发=3 输出=<私有目录>
 ```
 
-每个 case 由独立子代理对照设计基线、可见思考和实际请求回包，分别分析设计遵循、任务完成及执行挣扎。默认最多并发 3 个，明确消耗模型 tokens；只读已有运行，不重新评测或修改平台。环境与身份 Header 遵循目标项目规则，不写死某个 Agent 的 PPE。
+每个 case 由独立子代理对照设计基线、可见思考和实际请求回包，分别分析设计遵循、任务完成及执行挣扎。默认并发 3 个，用户指定时按指定并发数执行，明确消耗模型 tokens；只读已有运行，不重新评测或修改平台。环境与身份 Header 遵循目标项目规则，不写死某个 Agent 的 PPE。
 
 固定模板输出 `site/index.html` 和 `site/cases/<case_key>.html`，支持从汇总逐项打开详情。统计由 Python 渲染器重算：顺畅通过率以全部选定 case 为分母，恢复/挣扎、不通过与证据不足分别列示；缺失 case 不被排除。默认私有本地交付，不上传真实学习内容、凭据或整段思考。
 
@@ -154,7 +154,7 @@ python3 -I -B -m unittest discover -s plugins/felix-skills/tests -p 'test_mia_de
 
 ```bash
 python3 -I -B plugins/felix-skills/skills/mia-eval/scripts/render_report.py demo --out /private/tmp/mia-eval-demo-new
-python3 -I -B -m unittest discover -s plugins/felix-skills/tests -p 'test_mia_eval_report.py'
+python3 -I -B -m unittest discover -s plugins/felix-skills/tests -p 'test_mia_eval_*.py'
 ```
 
 ## 双平台 manifest

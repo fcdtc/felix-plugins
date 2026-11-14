@@ -7,7 +7,7 @@
 从仓库根运行，输出目录必须是新目录：
 
 ```bash
-python3 -I -B -m unittest discover -s plugins/felix-skills/tests -p 'test_mia_eval_report.py'
+python3 -I -B -m unittest discover -s plugins/felix-skills/tests -p 'test_mia_eval_*.py'
 python3 -I -B plugins/felix-skills/skills/mia-eval/scripts/render_report.py demo --out /private/tmp/mia-eval-demo-new
 python3 scripts/validate-skills.py
 claude plugin validate ./plugins/felix-skills
@@ -20,6 +20,8 @@ git diff --check
 | --- | --- |
 | 默认输出路径 | 使用当前项目根目录的.eval下独立运行目录，不使用Skill安装位置；Git忽略生效，历史目录不覆盖，显式输出目录优先 |
 | 默认待评价范围 | 待评价45、平台失败5时默认选45个，分母45；不把平台失败数当作审计不通过数。scope_complete按待评价范围判断，用户明确扩大范围时才纳入其他状态 |
+| 并发参数静态走查 | 未指定时N=3；指定1时单槽位，指定8时按8个槽位分派，不被默认3截断；剩余case不足N时全部启动，完成一个立即补位 |
+| 实际并发受限 | 只依据宿主容量限制或实际CLI限流处理，说明指定值、实际可用值及依据；无效参数请用户修正，不静默回落默认值 |
 | 四类合成case各一项 | 顺畅通过率为1/4，四类互斥，总数为4 |
 | 少一个worker结果 | 该case保留证据不足及可打开的占位页，分母不变 |
 | 版本不同或关键轨迹缺失 | 不进入顺畅通过 |
@@ -46,4 +48,4 @@ git diff --check
 
 ## 现场审计能力验收
 
-本地单元测试不验证MIA权限、任意任务结构、最新CLI、真实多轮关联或子代理判断质量。首次在新环境使用时用用户提供任务的小样本确认字段结构，再覆盖全量；与文档已见形态不同则适配本次取证，不能改造真实记录来迎合样例。
+并发文档回归仅检查规则一致性，不验证宿主实际启动数量或运行时并发。本地单元测试不验证MIA权限、任意任务结构、最新CLI、真实多轮关联或子代理判断质量。首次在新环境使用时用用户提供任务的小样本确认字段结构，再覆盖全量；与文档已见形态不同则适配本次取证，不能改造真实记录来迎合样例。
