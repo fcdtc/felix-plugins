@@ -85,7 +85,7 @@ smoothness检查表达“证据足以判断”；观察到完整返工时check�
 新报告finding填写`scope`：
 
 - `agent_flow`：影响本次Agent职责、工具使用或收尾；仅这类confirmed发现参与不通过。
-- `platform_context`：后端实现、Mock、部署或真实送达背景；不参与Agent判定，也不参与默认Agent改进建议影响数。默认无需主动取得，可用limitations简述。
+- `platform_context`：后端实现、Mock、部署或真实送达背景；不参与Agent判定，也不计入默认问题汇总涉及的case数。默认无需主动取得，可用limitations简述。
 
 纯恢复返工及性能建议放struggles。P0为关键对象关联/越权/关键收尾错误；P1为阶段遗漏/硬门槛/内容范围违约；P2为次要规范或结果陈述错误。归最早已证实层：工程输入/调用适配→Tool可见契约→SP编排→Skill→User模板→模型预算。未定位问题不强归模型；不以换模型或“再强调Prompt”替代能力事实。
 

@@ -66,7 +66,7 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(result["counts"], {"pass": 1, "fail": 1, "recovered": 1, "insufficient": 1})
         summary = (self.root / "output/index.html").read_text()
         self.assertIn("顺畅通过率=1/4 · 25.0%", summary)
-        self.assertIn("影响 2 个 case", summary)
+        self.assertIn("涉及 1 个 case", summary)
         for file in (self.root / "output").rglob("*.html"):
             links = Links()
             links.feed(file.read_text())
@@ -74,6 +74,47 @@ class ReportTests(unittest.TestCase):
             self.assertNotIn("src", links.scripts[0])
             for link in links.links:
                 self.assertTrue((file.parent / link).is_file(), (file, link))
+
+    def test_summary_shows_issues_and_concrete_cases_without_advice(self):
+        for version in (1, 2):
+            with self.subTest(version=version):
+                manifest, reports, synthesis = renderer.demo_data(version=version)
+                self.assertEqual(set(synthesis), {"summary", "issues"})
+                issue = synthesis["issues"][0]
+                self.assertEqual(set(issue), {"id", "priority", "title", "layer", "problem", "examples"})
+                page = renderer.render_summary(manifest, reports, synthesis, set())
+                for value in ("问题汇总", "具体 case", issue["title"], "层级：" + issue["layer"], issue["problem"]):
+                    self.assertIn(value, page)
+                for example in issue["examples"]:
+                    self.assertIn(example["description"], page)
+                    self.assertIn('href="cases/' + example["case_key"] + '.html"', page)
+                for value in ("改进建议", "暂无建议", "修改：", "验证：", "回归验证", reports["fail"]["findings"][0]["suggestion"]):
+                    self.assertNotIn(value, page)
+
+    def test_summary_issue_order_and_empty_state(self):
+        issue = {"id": "issue-2", "priority": "P2", "title": "次要问题", "layer": "Agent", "problem": "结果说明不准确。", "examples": [{"case_key": "fail", "description": "只返回一项，却说返回了两项。"}]}
+        self.synthesis = {"summary": "合成示例", "issues": [issue, dict(issue, id="issue-0", priority="P0", title="严重问题"), dict(issue, id="issue-1", priority="P1", title="主要问题")]}
+        renderer.validate_synthesis(self.synthesis, self.manifest)
+        page = renderer.render_summary(self.manifest, self.reports, self.synthesis, set())
+        self.assertLess(page.index("P0 · 严重问题"), page.index("P1 · 主要问题"))
+        self.assertLess(page.index("P1 · 主要问题"), page.index("P2 · 次要问题"))
+        self.assertIn("涉及 1 个 case", page)
+        self.synthesis["issues"] = []
+        renderer.validate_synthesis(self.synthesis, self.manifest)
+        page = renderer.render_summary(self.manifest, self.reports, self.synthesis, set())
+        self.assertIn("未发现本次范围内的问题", page)
+
+    def test_summary_case_reasons_explain_the_actual_problem(self):
+        for version in (1, 2):
+            with self.subTest(version=version):
+                manifest, reports, synthesis = renderer.demo_data(version=version)
+                reports["fail"]["checks"][0]["observed"] = "只返回了项目 A，项目 B 的建议没有给出。"
+                reports["fail"]["findings"][0]["claim"] = "第二项建议没有给出，任务没有做完。"
+                page = renderer.render_summary(manifest, reports, synthesis, set())
+                for value in (reports["fail"]["checks"][0]["observed"], reports["fail"]["findings"][0]["claim"], reports["recovered"]["struggles"][0]["description"], "实际调用记录不完整"):
+                    self.assertIn(value, page)
+                for value in ("已确认实质偏差", "三轴判定存在 unknown", "trace 覆盖不完整", "必需检查缺失或 unknown"):
+                    self.assertNotIn(value, page)
 
     def test_summary_omits_limitations_section_but_case_keeps_it(self):
         for version in (1, 2):
@@ -277,7 +318,7 @@ class ReportTests(unittest.TestCase):
 
     def test_zero_samples_is_na_not_zero_percent(self):
         self.manifest["cases"] = []
-        self.synthesis["recommendations"] = []
+        self.synthesis["issues"] = []
         self.dump("manifest.json", self.manifest)
         self.dump("synthesis.json", self.synthesis)
         for path in (self.root / "reports").iterdir():
@@ -327,13 +368,46 @@ class ReportTests(unittest.TestCase):
                     renderer.render_template("test.html", {"A": "x"})
 
     def test_synthesis_invalid_reference_and_fields(self):
-        self.synthesis["recommendations"][0]["case_keys"] = ["not-present"]
+        issue = {"id": "issue-1", "priority": "P1", "title": "漏掉第二项", "layer": "Agent", "problem": "要求返回两项，实际只返回一项。", "examples": [{"case_key": "fail", "description": "返回了项目 A，漏掉项目 B。"}]}
+        valid = {"summary": "合成问题汇总", "issues": [issue]}
+        renderer.validate_synthesis(valid, self.manifest)
+        mutations = (
+            ("范围外 case", lambda value: value["issues"][0]["examples"][0].update(case_key="not-present")),
+            ("没有具体 case", lambda value: value["issues"][0].update(examples=[])),
+            ("重复 case", lambda value: value["issues"][0]["examples"].append(copy.deepcopy(issue["examples"][0]))),
+            ("空描述", lambda value: value["issues"][0]["examples"][0].update(description=" ")),
+            ("缺少描述", lambda value: value["issues"][0]["examples"][0].pop("description")),
+            ("非法严重程度", lambda value: value["issues"][0].update(priority="P3")),
+            ("重复问题编号", lambda value: value["issues"].append(copy.deepcopy(issue))),
+            ("修改建议字段", lambda value: value["issues"][0].update(change="不应要求改法")),
+            ("验证字段", lambda value: value["issues"][0].update(validation="不应要求验证")),
+        )
+        for label, mutate in mutations:
+            with self.subTest(label=label):
+                value = copy.deepcopy(valid)
+                mutate(value)
+                with self.assertRaises(renderer.ContractError):
+                    renderer.validate_synthesis(value, self.manifest)
         with self.assertRaises(renderer.ContractError):
-            renderer.validate_synthesis(self.synthesis, self.manifest)
+            renderer.validate_synthesis({"summary": "旧格式", "recommendations": []}, self.manifest)
         report = self.reports["pass"]
         report["aggregate_status"] = "pass"
         with self.assertRaises(renderer.ContractError):
             renderer.validate_case(report, self.manifest)
+
+    def test_summary_issue_text_is_escaped(self):
+        payload = '<script>alert("x")</script><img src=x onerror=alert(1)>{{TITLE}}'
+        self.synthesis = {"summary": payload, "issues": [{"id": "issue-1", "priority": "P1", "title": payload, "layer": payload, "problem": payload, "examples": [{"case_key": "fail", "description": payload}]}]}
+        renderer.validate_synthesis(self.synthesis, self.manifest)
+        page = renderer.render_summary(self.manifest, self.reports, self.synthesis, set())
+        self.assertNotIn('<script>alert("x")', page)
+        self.assertNotIn("<img", page)
+        self.assertEqual(page.count("&lt;script&gt;"), 5)
+        self.assertEqual(page.count("{{TITLE}}"), 5)
+        parser = Links()
+        parser.feed(page)
+        self.assertEqual(len(parser.scripts), 1)
+        self.assertIn("cases/fail.html", parser.links)
 
     def test_partial_scope_and_axis_unknown_visible(self):
         self.manifest["scope_complete"] = False

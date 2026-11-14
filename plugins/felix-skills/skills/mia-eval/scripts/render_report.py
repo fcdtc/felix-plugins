@@ -17,6 +17,7 @@ SLUG = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 SLOT = re.compile(r"\{\{([A-Z][A-Z0-9_]*)\}\}")
 METRICS = ("latency_ms", "model_calls", "tool_calls", "tool_failures", "business_errors", "retries", "prompt_tokens", "completion_tokens")
 LABELS = {"pass": "顺畅通过", "fail": "失败", "recovered": "恢复/挣扎", "insufficient": "证据不足"}
+CHECK_LABELS = {"identity": "执行版本和对象", "design": "设计要求", "tool_usage": "工具是否用对", "execution": "任务是否处理完", "completion_gate": "是否提前结束", "smoothness": "是否需要返工"}
 
 
 class ContractError(ValueError):
@@ -222,20 +223,22 @@ def validate_case(value, manifest):
 
 
 def validate_synthesis(value, manifest):
-    fields(value, "summary recommendations", "synthesis")
+    fields(value, "summary issues", "synthesis")
     text(value["summary"], "synthesis.summary")
-    require(isinstance(value["recommendations"], list), "recommendations 必须是数组")
-    for rec in value["recommendations"]:
-        fields(rec, "id priority title layer problem change case_keys validation", "recommendation")
-        for key in ("id", "title", "layer", "problem", "change", "validation"):
-            text(rec[key], "recommendation." + key)
-        enum(rec["priority"], "P0 P1 P2", "priority")
-        texts(rec["case_keys"], "recommendation.case_keys")
-        unique(rec["case_keys"], "recommendation.case_keys")
-        require(bool(rec["case_keys"]), "建议必须引用至少一个 case")
-        for key in rec["case_keys"]:
-            member(manifest, key)
-    unique([r["id"] for r in value["recommendations"]], "recommendation id")
+    require(isinstance(value["issues"], list), "issues 必须是数组")
+    for issue in value["issues"]:
+        fields(issue, "id priority title layer problem examples", "issue")
+        for key in ("id", "title", "layer", "problem"):
+            text(issue[key], "issue." + key)
+        enum(issue["priority"], "P0 P1 P2", "issue.priority")
+        require(isinstance(issue["examples"], list) and bool(issue["examples"]), "问题必须引用至少一个具体 case")
+        for example in issue["examples"]:
+            fields(example, "case_key description", "issue.example")
+            for key in ("case_key", "description"):
+                text(example[key], "issue.example." + key)
+            member(manifest, example["case_key"])
+        unique([example["case_key"] for example in issue["examples"]], "issue example case_key")
+    unique([issue["id"] for issue in value["issues"]], "issue id")
     return value
 
 
@@ -246,36 +249,37 @@ def assess(manifest, report, page_missing=False):
     case = member(manifest, report["case_key"])
     if report["identity"] != manifest["target"]:
         reasons.append("身份/版本不匹配，不能计顺畅通过")
-    for key in ("baseline", "trace"):
+    for key, label in (("baseline", "Agent 设计内容"), ("trace", "实际调用记录")):
         if report["coverage"][key] != "complete":
-            reasons.append(key + " 覆盖不完整")
+            reasons.append(label + "不完整")
     checks = {c["id"]: c for c in report["checks"]}
     if not case["required_check_ids"]:
-        reasons.append("未定义 required_check_ids，必需检查集合不足")
+        reasons.append("尚未列出这个 case 必须检查的内容")
     for key in case["required_check_ids"]:
         if key not in checks or checks[key]["status"] == "unknown":
-            reasons.append("必需检查缺失或 unknown: " + key)
+            label = checks[key]["requirement"] if key in checks else CHECK_LABELS.get(key, "一项必要要求")
+            reasons.append("还无法确认：" + label)
     if any(c["status"] == "unknown" for c in report["checks"]):
-        reasons.append("存在未判定检查")
+        reasons.append("有检查项尚未得出结论")
     if "unknown" in report["verdict"].values():
-        reasons.append("三轴判定存在 unknown")
+        reasons.append("是否按设计执行、任务是否做完或是否需要返工，仍有一项无法判断")
     if not any(step["evidence_refs"] for step in report["timeline"]):
-        reasons.append("缺少支撑顺畅度的轨迹证据")
+        reasons.append("缺少实际调用记录，无法判断过程是否顺利")
     if page_missing:
         reasons.append("缺少已渲染 case HTML；已生成证据不足占位页")
     hard_fail = ("fail" in (report["verdict"]["design"], report["verdict"]["execution"])
                  or any(c["status"] == "fail" for c in report["checks"])
                  or any(f["confidence"] == "confirmed" for f in scoped_findings(manifest, report)))
     if hard_fail:
-        return "fail", ["存在有证据的设计/执行失败、失败检查或已确认实质偏差"] + reasons
+        return "fail", ["实际记录显示，至少有一项设计要求没有满足"] + reasons
     if reasons:
         return "insufficient", reasons
     # v2错误计数仅是事实：首次不可用后正确受阻并继续不自动算挣扎。
     issues = report["struggles"] or (report["metrics"]["retries"] or 0) > 0 or (not agent_flow(manifest) and
               any((report["metrics"][key] or 0) > 0 for key in ("tool_failures", "business_errors")))
     if report["verdict"]["smoothness"] != "smooth" or issues:
-        return "recovered", ["设计与执行通过，但恢复、挣扎或问题记录使其不计顺畅通过"]
-    return "pass", ["设计与执行通过；必需检查和轨迹完整；没有已记录问题"]
+        return "recovered", ["最终按设计要求处理完了任务，但过程中有重试、返工或其他已记录问题"]
+    return "pass", ["按设计要求处理完了任务；必要记录完整，没有发现本次范围内的问题"]
 
 
 def esc(value):
@@ -376,6 +380,13 @@ def render_summary(manifest, reports, synthesis, missing_pages):
         key = case["case_key"]
         report = reports.get(key)
         status, reasons = assess(manifest, report, key in missing_pages)
+        if report and status == "fail":
+            details = [c["observed"] for c in report["checks"] if c["status"] == "fail"]
+            details += [f["claim"] for f in scoped_findings(manifest, report) if f["confidence"] == "confirmed"]
+            if details:
+                reasons = list(dict.fromkeys(details)) + reasons[1:]
+        elif report and status == "recovered":
+            reasons += [s["description"] for s in report["struggles"]]
         counts[status] += 1
         for axis in axes:
             axis_status = "unknown"
@@ -409,11 +420,16 @@ def render_summary(manifest, reports, synthesis, missing_pages):
     axis_labels = (("design", "设计遵循率"), ("execution", "流程完成率"), ("tool_usage", "工具正确使用率"), ("completion_gate", "结束时机正确率")) if agent_flow(manifest) else (("design", "保守确认设计遵循率"), ("execution", "保守确认任务完成率"))
     stats += table(["分项指标", "通过 / 全部", "率", "失败", "unknown"], [(label, str(axes[axis]["pass"]) + " / " + str(n), ratio(axes[axis]["pass"], n), str(axes[axis]["fail"]), str(axes[axis]["unknown"])) for axis, label in axis_labels])
     stats += paragraph("各项按自身判定及同名检查分别统计；身份和基线/轨迹完整时，本项通过不因另一项失败而变unknown。流程完成包括规则允许的静默和受阻收尾，不要求后端真实落盘；平台背景发现不参与Agent通过率。" if agent_flow(manifest) else "历史三轴率保留原保守口径：整体失败时未失败轴仍为unknown。旧报告没有按新标准重审，不用于推算Agent流程通过率。")
-    recommendations = []
-    for rec in sorted(synthesis["recommendations"], key=lambda r: (r["priority"], r["id"])):
-        links = "、".join('<a href="cases/' + key + '.html">' + esc(member(manifest, key)["title"]) + '</a>' for key in rec["case_keys"])
-        recommendations.append('<article><h3>' + esc(rec["priority"] + " · " + rec["title"]) + '</h3>' + paragraph("层级：" + rec["layer"]) + paragraph("问题：" + rec["problem"]) + paragraph("修改：" + rec["change"]) + '<p>影响 ' + str(len(rec["case_keys"])) + ' 个 case：' + links + '</p>' + paragraph("验证：" + rec["validation"]) + '</article>')
-    return page("summary.html", dict(TITLE=esc(manifest["title"]), META=metadata(manifest), CONCLUSION=paragraph(synthesis["summary"]), RATE=esc("顺畅通过率=" + str(counts["pass"]) + "/" + str(n) + " · " + ratio(counts["pass"], n)), STATS=stats, RECOMMENDATIONS="".join(recommendations) or paragraph("暂无建议"), CASES=table(["序号", "Case", "重算结论", "判定依据 / 缺口", "业务错误数"], rows, ' id="case-table"')))
+    issues = []
+    for issue in sorted(synthesis["issues"], key=lambda item: (item["priority"], item["id"])):
+        examples = []
+        for example in sorted(issue["examples"], key=lambda item: member(manifest, item["case_key"])["ordinal"]):
+            key = example["case_key"]
+            case = member(manifest, key)
+            link = '<a href="cases/' + key + '.html">' + esc(str(case["ordinal"]) + " · " + case["title"]) + '</a>'
+            examples.append('<li>' + link + paragraph(example["description"]) + '</li>')
+        issues.append('<article><h3>' + esc(issue["priority"] + " · " + issue["title"]) + '</h3>' + paragraph("层级：" + issue["layer"]) + paragraph("问题：" + issue["problem"]) + '<p>具体 case（涉及 ' + str(len(examples)) + ' 个 case）：</p><ul>' + "".join(examples) + '</ul></article>')
+    return page("summary.html", dict(TITLE=esc(manifest["title"]), META=metadata(manifest), CONCLUSION=paragraph(synthesis["summary"]), RATE=esc("顺畅通过率=" + str(counts["pass"]) + "/" + str(n) + " · " + ratio(counts["pass"], n)), STATS=stats, ISSUES="".join(issues) or paragraph("未发现本次范围内的问题"), CASES=table(["序号", "Case", "重算结论", "判定依据 / 缺口", "业务错误数"], rows, ' id="case-table"')))
 
 
 def no_symlink(path):
@@ -527,7 +543,7 @@ def demo_data(version=2):
     reports["insufficient"]["coverage"]["trace"] = "partial"
     reports["insufficient"]["verdict"]["execution"] = "unknown"
     reports["insufficient"]["checks"][0].update(status="unknown", evidence_refs=[])
-    synthesis = {"summary": "合成演示含顺畅通过、失败、恢复/挣扎、证据不足各一例，顺畅通过率由脚本计算。", "recommendations": [{"id": "rec-1", "priority": "P1", "title": "合成建议：增加输出数量检查", "layer": "agent", "problem": "合成失败 case 数量不足", "change": "返回前检查数量", "case_keys": ["fail", "recovered"], "validation": "合成回归检查返回两项且无需重试"}]}
+    synthesis = {"summary": "四个合成示例中，一个顺利完成，一个漏掉了第二项建议，一个重试后完成，一个没有足够记录判断是否完成。顺畅通过率由脚本计算。", "issues": [{"id": "issue-1", "priority": "P1", "title": "要求返回两项建议，只返回了一项", "layer": "Agent", "problem": "用户需要两项学习建议，Agent 只返回了第一项就结束，第二项没有给出。用户拿到的内容少了一项，任务没有做完。", "examples": [{"case_key": "fail", "description": "这个合成 case 要求返回项目 A 和项目 B 的学习建议，实际只返回项目 A，没有项目 B 的建议。"}]}]}
     if version == 2:
         manifest["schema_version"] = 2
         manifest["audit_scope"] = {"profile": "agent_flow", "focus": ["完整流程", "正确工具使用", "最终结束时机"], "agent_purpose": "处理合成请求中的两项学习建议", "completion_criteria": ["每项建议有结果或规则允许的受阻结论", "最终结束前完成全部独立项"], "exclusions": ["Tool是否Mock", "真实持久化与实际送达"]}
