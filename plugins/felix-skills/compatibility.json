@@ -49,7 +49,9 @@
       "support": "claude-and-codex",
       "requires": ["writing-for-agents"],
       "environment_requirements": [
-        "按 Agent ID 获取基线或同步 MIA 时需安装官方 miacli skill 及其所需 CLI，并具有目标空间相应访问权限；本地交付既有 Agent 修改仍需只读访问，离线新建设计不要求平台访问；本地交付需对执行项目的 .design/ 目录有写权限"
+        "local 模式优化既有 Agent 需安装官方 miacli skill 及其所需 CLI，并具有目标空间只读权限；离线新建设计不要求平台访问；改动文件与逐文件修改说明需对执行项目的 .design/ 目录有写权限",
+        "local 分页 Diff 使用 Python 3.9 或更新版本及标准库，需 replacement-manifest.md 的逐文件修改说明；浏览器直接打开 diff.html，每页展示一个文件及其修改说明；不比较 Tool 定义，不需要网络或前端依赖",
+        "sync 模式需官方 miacli skill、其所需 CLI 与本轮目标资源的草稿写入及挂载权限；运行与发布按本轮单独授权执行"
       ]
     },
     "mia-eval": {

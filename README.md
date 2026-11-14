@@ -109,6 +109,32 @@ python3 -I -B -m unittest discover -s plugins/felix-skills/tests -p 'test_collec
 
 入口：[skill-retro](plugins/felix-skills/skills/skill-retro/SKILL.md)。借鉴 `retro` 的证据驱动复盘方法，聚焦目标 Skill，而非扩展成全局环境审计；写作方法复用 `writing-for-agents`。
 
+## MIA Agent 链路设计
+
+`mia-design` 仅显式调用，支持新建或优化 Agent，核对 System Prompt、User Prompt、Skill、Tool、Skill SP 与 Tool SP 六类配置。通过**交付模式（Delivery Mode）**参数 `--delivery local|sync` 固定选择本轮交付方式：
+
+- `local`：只读获取平台基线，在项目 `.design/<agent_id>/<本轮唯一标识>/` 下仅交付改动文件，`baseline/` 放对应已取得的旧稿，`updated/` 放修改或新增文件的完整正文；`replacement-manifest.md` 为每个改动文件分别说明改了什么、为什么改、依据及预期效果。另生成可直接离线打开的分页 `diff.html`，每页一个文件的 Diff，下方附该文件的修改说明；对比 Prompt、Skill 与 SP，排除 Tool 定义（Tool SP 仍参与）；不生成 `packages/` 或 ZIP。由用户按清单应用，不修改、运行或发布 MIA。新建且暂无 Agent ID 时目录使用 `new-agent`。
+- `sync`：直接保存目标范围内的 MIA 草稿、更新 Agent 挂载并回读核对；选择该模式即授权本轮范围内的草稿同步，运行、发布与部署仍需单独授权。
+
+```text
+/felix-skills:mia-design --delivery local Agent=<Agent ID 或设计页URL> 优化工具调用规则
+/felix-skills:mia-design --delivery sync Agent=<Agent ID 或设计页URL> 优化场景路由
+/felix-skills:mia-design --delivery local 新建 Agent，目标=<业务职责>
+```
+
+没有默认模式：省略参数且未明确表达交付方式时，先询问用户选择；“只出本地文档／我自行同步”与“直接改 MIA”分别等价于 `local`、`sync`。冲突或无效参数先澄清，MIA 链接不代表写入授权，平台依赖或权限缺失不自动切换模式。Codex 从技能列表显式调用 `mia-design`，使用同一参数与规则。
+
+入口与完整模式契约：[mia-design](plugins/felix-skills/skills/mia-design/SKILL.md)；本地文件命名、逐文件修改说明和应用规则见[本地交付与差异查看](plugins/felix-skills/skills/mia-design/references/local-delivery.md)。平台操作依赖官方 `miacli`；离线新建的 `local` 设计不要求平台访问，既有 Agent 的本地修改仍需只读基线。
+
+Diff 工具使用 Python 3.9+ 标准库，直接比较两边同路径文件，并从清单的 `## 逐文件修改说明` 下按 `### 相对文件路径` 读取说明，生成单个分页 HTML；每个变化文件须有非空的 `- 为什么改：...`，缺失时明确报错。支持上一页／下一页、文件选择与左右方向键；不需要中间 diff 文件、服务或前端依赖。缺旧稿标为“无基线”，是否新增或删除以清单为准；源文件或清单变化后须重新生成。Skill 的改动文件需合入对应固定版本的完整目录后再打包上传，稀疏交付目录不能直接作为完整 Skill 上传。
+
+```bash
+python3 -I -B plugins/felix-skills/skills/mia-design/scripts/render_diff.py <本轮交付目录>
+python3 -I -B -m unittest discover -s plugins/felix-skills/tests -p 'test_mia_design_diff.py'
+```
+
+默认生成交付目录下的 `diff.html`；更新既有页面时先检查目标，再使用 `--overwrite`。页面保持私有本地，不上传 Artifact 或其他服务。
+
 ## MIA 评测链路审计
 
 `mia-eval` 仅显式调用，输入一个固定 MIA Agent 版本与评测任务 URL，适用于任意 Agent，不限定 Alfred。默认由官方 CLI 获取完整记录、按需导出和读取 Session debug；CSV 是权限、保留期限或平台外标注等缺口的可选补充，不要求用户每次手工下载。

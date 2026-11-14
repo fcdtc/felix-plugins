@@ -1,5 +1,5 @@
 interface:
   display_name: "MIA Agent 链路设计"
-  short_description: "按 Agent ID 获取六类配置，优化链路并交付项目 .design/ 或授权同步"
+  short_description: "选择本地改动文件与分页 Diff（逐页附修改说明），或直接同步 MIA 草稿；未指定先询问"
 policy:
   allow_implicit_invocation: false
