@@ -1,5 +1,5 @@
 interface:
-  display_name: "Unslop"
-  short_description: "去除文本中的 AI 写作痕迹，同时保留原意并匹配目标语气"
+  display_name: "去除 AI 味"
+  short_description: "去除中文及中英混排文本中的套话、空话和模板腔，保留原意与目标语气"
 policy:
   allow_implicit_invocation: false

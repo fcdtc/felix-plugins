@@ -1,62 +1,76 @@
 ---
 name: unslop
-description: Cut AI tells from any writing.
+description: 去除中文及中英混排文本中的套话、空话和模板腔，保留原意与目标语气。
+argument-hint: "<待改写文本或文件路径> [目标语气]"
 disable-model-invocation: true
 ---
 
-# Unslop
+# 去除 AI 味
 
-Edit text to remove AI patterns. Scan for the patterns below, then rewrite. Preserve meaning and match the intended tone.
+编辑文本，去除 AI 写作中常见的表达模式。扫描下列规则，再改写。保留原意，匹配目标语气。这些规则用于改善表达，不用于判定作者是否使用 AI，也不承诺通过任何检测。
 
-## Patterns to detect and fix
+## 执行方式
 
-Rule numbers are stable ids that other skills cite. A removed rule leaves a gap.
+1. 确定待改写文本与目标语气。文本可以直接粘贴或以文件路径提供；未指定语气时沿用原文。未提供文本且上下文无法唯一确定目标时，请用户补充。
+2. 逐条扫描下列规则，只改命中且影响表达的位置。词语、标点或句式出现本身不是问题；按文体保留自然的排比、准确的术语和有实际作用的修辞。
+3. 对照原文复核改写稿，满足下面的保真要求后完成。每项改动应能对应具体规则；已经清楚自然的内容保持原样。
+4. 默认只返回改写后的正文；用户要求时再附简短修改说明。若全文都是应删除的空话，简短说明没有可保留的具体信息，不编造正文。文件路径只表示读取来源，只有用户明确要求修改文件时才写回。
 
-### Content
+## 保真要求
 
-3. **Superficial -ing phrases.** "highlighting...", "ensuring...", "reflecting...", "showcasing...", "fostering...". Delete or expand with real sources.
-5. **Vague attributions.** "Experts believe", "Industry reports suggest", "Some critics argue". Name the source or delete.
+- 只使用原文与用户提供的补充材料。保留关键事实、立场、因果关系、适用条件和必要的不确定性；删除冗余表达，不改变结论强度。
+- 不为使文字具体而编造来源、数据、机制、例子或个人经历。有缺口时保留原有的不确定性；用户要求说明修改时，指出需要补充的证据。
+- 保留代码、命令、路径、API 标识和直接引文的原文；可以调整其外围说明，不改动被引用的证据。
 
-### Language
+## 需要识别和修改的模式
 
-7. **AI vocabulary.** Additionally, crucial, delve, enduring, enhance, fostering, garner, interplay, intricate, landscape (abstract), pivotal, showcase, tapestry (abstract), testament, underscore, vibrant. Replace with plain words.
-8. **Fancy ways to say "is".** "serves as", "stands as", "boasts", "features". Say "is" or "has".
-9. **"Not just X, but Y."** State the point directly instead.
-10. **Rule of three.** Don't force ideas into groups of three. Use the natural number.
-11. **Synonym cycling.** Protagonist, main character, central figure, hero all in one paragraph. Pick one, repeat it.
-12. **False ranges.** "from X to Y" where X and Y aren't on a meaningful scale. List topics directly.
+规则编号沿用原版，供其他技能引用。删除规则时保留编号空缺。
 
-### Style
+### 内容
 
-13. **Em dash overuse.** Avoid em dashes entirely. Use periods or commas only (no parentheses, no en dashes, no hyphen-as-dash substitutes). If a thought needs separation, end the sentence or use a comma.
-14. **Colon overuse.** Colons are fine before a list or example, not as mid-sentence connectors. "If you're coming from traditional automation: instead of registering event handlers, you describe conditions" adds nothing with the colon. Rewrite to let the point stand on its own without comparison framing. "Describing when the scheduler should fire works best as plain English." Same meaning, no crutch punctuation.
-15. **Boldface overuse.** Don't bold every proper noun or acronym.
-16. **Inline-header lists.** The tell is a bold label and colon that restates the line: "**Performance:** Performance improved...". Convert those to prose. A bold lead-in that ends in a period, names the item, and is followed by genuinely new detail ("**Schema in TypeScript.** Tables live in one file.") is fine, not a tell.
-17. **Title case headings.** Use sentence case.
-18. **Decorative emojis.** Remove from headings and bullets.
-19. **Curly quotes.** Use straight quotes.
+3. **空泛的附加说明。** “彰显了……”“体现了……”“确保了……”“促进了……”常接在事实后面，却没有补充证据。“通过……实现……从而……”也可能堆出未经证明的因果关系。删除无依据的尾句，或用已有材料写清具体作用；有证据的因果关系保留。
+5. **模糊归属。** “专家认为”“业内普遍认为”“研究表明”“一些批评者指出”。有来源时写明具体的人、机构或文献；没有来源时删去空泛归属，不把它改成已经证实的事实。
 
-### Communication artifacts
+### 语言
 
-20. **Chatbot phrases.** "I hope this helps!", "Let me know if...", "Of course!", "Certainly!", "Found the smoking gun!" Remove.
-22. **Sycophantic tone.** "Great question! You're absolutely right!" Respond directly.
+7. **模板化词汇。** “深度”“全方位”“多维度”“至关重要”“赋能”“助力”“充分彰显”“焕发活力”。没有具体含义时，换成普通词或删掉；确实表示深度、范围或重要程度时保留，不做关键词批量替换。
+8. **绕着“是”“有”“能”说话。** “作为……而存在”“扮演着……的角色”“具备……的能力”。直接写关系或动作，例如“具备读取文件的能力”改为“能读取文件”。
+9. **“不仅……更……”句式。** 直接说重点。“不仅检查配置，还生成报告”改为“检查配置并生成报告”。确有递进或纠正关系时，保留必要的对比。
+10. **硬凑三点。** 按实际内容决定条目数量，不为了排比把两点扩成三点，也不把四点强塞成三点。
+11. **同义词轮换。** 同一段里把同一个对象轮流称作“用户”“使用者”“体验者”，或“系统”“平台”“引擎”。选定准确称呼并重复使用；确实不同的概念保持区分。
+12. **虚假的范围。** “从效率到体验”“从技术到生态”，两端不在有意义的尺度上。直接列出话题，或写清实际变化。时间、数值、流程阶段等真实范围保留。
 
-### Filler
+### 风格
 
-23. **Filler phrases.** "In order to" becomes "To". "Due to the fact that" becomes "Because". Delete "It is important to note that".
-24. **Excessive hedging.** "could potentially possibly be argued that it might" becomes "may".
-25. **Generic conclusions.** "The future looks bright." State specific plans or facts.
+13. **破折号过多。** 连续用破折号插入解释、追加结论或制造停顿，会打断阅读。需要分开表达时用句号，关系简单时用逗号；确有插入说明用途的破折号和括号可以保留，不把正常中文标点一律禁掉。
+14. **冒号过多。** 列表或例子前可以用冒号，不把冒号当句中连接词。“需要注意的是：导出仅支持 CSV”改为“导出仅支持 CSV。”
+15. **加粗过多。** 不给每个专有名词、缩写或结论都加粗。只保留有助于阅读定位的强调。
+16. **重复内容的行内标题。** “**性能：** 性能有所提升……”的标签只是重复正文，改为普通叙述。标题点明主题、后文提供新信息时可以保留，例如“**配置文件。** 所有参数在同一个文件中。”
+17. **模板化中文标题。** 用简短、具体的主题或问题作标题。“全面解析：配置管理的关键实践”改为“配置管理实践”。混排的英文标题使用句首大写，保留专有名词和缩写的正确大小写，不把每个实词都大写。
+18. **装饰性表情。** 删除标题和列表中只起装饰作用的表情符号；承担状态或含义区分的符号不属于装饰。
+19. **引号和标点不合中文习惯。** 中文正文使用“中文引号”，引号内再引用时使用‘单引号’，采用正常中文标点。英文片段按所在文档的规范处理；不把代码、命令或标识中的半角符号替换成全角符号。
 
-### Jargon
+### 对话残留
 
-26. **Abstract metaphor nouns.** Substrate (base), wedge, wedge in (add), vector (way, method), locus, vantage, nexus, primitive as a noun, harness as a metaphor, surface as in "API surface", bedrock, scaffolding as a metaphor, modality, paradigm, gold-plating (more than the job needs), ratchet as a metaphor (the mechanism's real name, or a limit that only tightens), evacuate for moving code (move out), endgame (the last phase), north star, flywheel. These read as technical but usually have a plainer concrete word. Pick the concrete word.
+20. **聊天机器人套话。** “当然可以！”“希望这对你有帮助”“如果还有问题，随时告诉我”“找到了罪魁祸首！”删掉这些开场、收尾和表演式反应，保留确有必要的下一步说明。
+22. **奉承语气。** “这是一个非常好的问题！”“你说得完全正确！”直接回应内容，不用无依据的赞美铺垫。
 
-### Plain speech
+### 冗余
 
-27. **Say what it does, not how it feels.** "the database stays close at hand", "SQL you can read", "types that follow your schema" name a feeling. The fix names the mechanism or a number: "`.toSQL()` returns the exact string sent to the database", "a column rename fails the build". Ask what the sentence tells the reader to do or know, then write that. If you can't restate it as a concrete instruction, fact, or number, cut it. One more check: if the sentence could appear unchanged in another project's docs, it says nothing about this one. Cut it.
-28. **Shorten or split dense sentences.** If the reader has to backtrack to parse a sentence, break it in two or drop clauses. One idea per sentence.
-29. **Active voice.** Prefer it. Catch "is/are/was/were + past participle" and name the actor: "queries are validated" becomes "the compiler validates queries", "the file is parsed by the loader" becomes "the loader parses the file". Passive is fine only when the actor is unknown or genuinely doesn't matter.
-30. **Cut adverbs, or use a stronger verb.** "runs quickly" becomes "is fast" or the number, and "significantly improves" becomes the measured delta. An adverb propping up a weak verb means the verb is wrong.
-31. **Prefer the plain word.** "utilize" and "leverage" become "use", "facilitate" becomes "help", "numerous" becomes "many", "in the event that" becomes "if". The fancier synonym is rarely clearer.
-32. **Mannered prose.** Metaphor or flourish where a literal phrase exists: aphorisms ("wire it or delete it"), rhetorical fragments for effect, personified code ("the plan holds it"), figurative verbs ("rides along", "stands on"), stock framing phrases. "A dial worth turning" becomes "a parameter worth varying". Say what you mean. Rule 26 covers the metaphor nouns.
-33. **Over-compression.** Dropped articles, verbless fragments, symbol-speak, and abbreviations that make the reader decode instead of read. "Parser rejects bad date → exit 2, no write" becomes "The parser rejects a bad date, exits with code 2, and writes nothing." Write whole sentences with their articles and verbs, and spell out arrows and abbreviations.
+23. **填充短语。** 删除“值得注意的是”“需要指出的是”“众所周知”“在当今快速发展的时代”等不提供信息的铺垫。“由于……的缘故”改为“因为……”。
+24. **过度保留。** “可能也许会”改为“可能会”。只删重复的保留词，保留证据不足时必要的不确定性，以及影响结论的前提、范围和例外。
+25. **泛泛的结尾。** “未来可期”“让我们拭目以待”“将开启新的篇章”。改为已有材料中的具体计划或事实；没有新信息就结束，不另造总结。
+
+### 行话
+
+26. **抽象的比喻名词。** “底座”“抓手”“生态”“闭环”“飞轮”“北极星”“引擎”等看起来专业，却可能没有指向具体事物。写出实际的组件、步骤、目标或反馈过程。例如“形成闭环”应说明谁处理问题、结果如何返回。保留准确的领域术语，如数学中的“向量”、开发工具中的“脚手架”；术语与上下文相符时不替换。
+
+### 直白表达
+
+27. **说它做什么，而不是给人什么感觉。** “数据库触手可及”“SQL 清晰易读”“类型紧跟表结构”描述的是感受。改写应交代原文已支持的机制或数字，例如“`.toSQL()` 返回实际发送到数据库的 SQL 字符串”“重命名列会导致构建失败”。问这句话告诉读者做什么或知道什么，再写出来。无法改写成具体指令、事实或数字的空泛评价，删掉。介绍项目特性时再检查一次：如果一句话原封不动地放进另一个项目的文档也成立，它可能没有说明这个项目的特点；删掉这种宣传话，保留有实际作用的通用说明。
+28. **拆开难读的长句。** 读者需要回头找主语、理清修饰关系时，拆成两句或删去冗余从句。一句话讲清一个意思，不把完整因果关系拆成不连贯的碎句。
+29. **优先交代行动者。** 留意“被……”“由……”“已完成……”和没有明确行动者的叙述。“文件由加载器解析”改为“加载器解析文件”。行动者未知或确实不重要时可以保留被动表达，不猜测或编造主语。
+30. **删去空泛副词，或用更准确的动词。** “显著”“大幅”“极大地”“有效地”不能代替结果。“显著降低错误率”应写已有测量结果；没有量化依据时删除“显著”，不凭空补数字。
+31. **优先用普通词。** 含义和语气一致时，“予以支持”改为“支持”，“进行配置”改为“配置”，“在……的情况下”改为“如果……”。更正式的说法不一定更清楚。
+32. **刻意的文采。** 有直白说法时，不用格言式口号、故作深刻的短句、代码拟人或套用的比喻。“数据一路畅行”应写成具体的传输或处理过程。把意思说清楚；抽象的比喻名词见规则 26。文体确实需要且表达准确的修辞可以保留。
+33. **过度压缩。** 省略关键动作、堆箭头和缩写，会让读者解码而不是阅读。“解析器拒绝坏日期 → 退出 2，不写”改为“解析器拒绝无效日期，以退出码 2 结束，且不写入文件。”写清动作、条件和结果，把叙述中的箭头展开为文字。中文可以在指代清楚时省略主语，不必机械补全每句话；流程图、表格和代码中的符号按用途保留。

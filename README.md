@@ -68,6 +68,19 @@ Claude Code 调用示例：
 
 Codex 使用技能列表中实际发现的 `init_aixue` 显式调用。已有文档、代理规则与脚本保留并增量合并；源码入口和内部模板见 [init_aixue](plugins/felix-skills/skills/init_aixue/SKILL.md)。技能初始化不安装依赖、不提交／推送或操作平台，生成手册不代表自动部署已绑定。
 
+## 中文文本去 AI 味
+
+`unslop` 仅显式调用，编辑中文及中英混排文本，去除套话、空话、模板化修辞和冗余格式，保留原意与目标语气。规则沿用原版编号，针对中文调整词汇、标题、标点、行动者表达和句子省略，不机械禁用正常修辞或准确术语。
+
+```text
+/felix-skills:unslop 请改写下面的文本，保持技术文档语气：<文本>
+/felix-skills:unslop docs/overview.md 保持原有语气，只返回改写稿
+```
+
+Codex 从技能列表显式调用 `unslop`，使用相同要求。默认只返回改写正文；明确要求修改文件时才写回。不编造数据、来源或个人经历，也不承诺通过 AI 检测。
+
+入口：[unslop](plugins/felix-skills/skills/unslop/SKILL.md)。
+
 ## 会话总结
 
 `session-summary` 仅由用户显式触发，按今天、昨天、指定日期、本周、上周或自定义时间区间，读取本机 Claude Code 与 Codex 全部项目会话，生成中文 Markdown。支持跨天续聊、压缩归档和跨平台主题归纳；系统／工具／子代理消息不作为提问。日报、周报统一采用“整体概览、重点工作、推进脉络”，时间线列为“时间、session_id、主要内容”；正文不展示日志来源、调用指令或扫描统计。读取缺口在交付回复中单独说明。
