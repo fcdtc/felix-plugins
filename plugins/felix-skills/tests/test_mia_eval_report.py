@@ -116,6 +116,41 @@ class ReportTests(unittest.TestCase):
                 for value in ("已确认实质偏差", "三轴判定存在 unknown", "trace 覆盖不完整", "必需检查缺失或 unknown"):
                     self.assertNotIn(value, page)
 
+    def test_summary_metadata_keeps_evaluation_mia_link(self):
+        task_url = "https://mia.example.invalid/evaluation/task/task-123?space_id=space-456&view=details"
+        for version in (1, 2):
+            with self.subTest(version=version):
+                manifest, reports, synthesis = renderer.demo_data(version=version)
+                manifest["task_url"] = task_url
+                renderer.validate_manifest(manifest)
+                page = renderer.render_summary(manifest, reports, synthesis, set())
+                metadata = page.split('<section aria-labelledby="meta-heading">', 1)[1].split("</section>", 1)[0]
+                self.assertIn('<h2 id="meta-heading">元信息</h2>', metadata)
+                self.assertIn("评测 MIA 链接", metadata)
+                self.assertIn('href="' + task_url.replace("&", "&amp;") + '"', metadata)
+                parser = Links()
+                parser.feed(metadata)
+                self.assertEqual(parser.links, [task_url])
+
+    def test_summary_missing_evaluation_link_stays_unprovided(self):
+        page = renderer.render_summary(self.manifest, self.reports, self.synthesis, set())
+        self.assertIn("<td>评测 MIA 链接</td><td>未提供</td>", page)
+
+    def test_summary_omits_methodology_notes_and_conclusion(self):
+        for version in (1, 2):
+            with self.subTest(version=version):
+                manifest, reports, synthesis = renderer.demo_data(version=version)
+                synthesis["summary"] = "不应在汇总页展示的独立结论正文"
+                renderer.validate_synthesis(synthesis, manifest)
+                page = renderer.render_summary(manifest, reports, synthesis, set())
+                for value in ("元信息与统计口径", "顺畅通过率=P/N", "证据使用脱敏定位与短引用", "conclusion-heading", "{{CONCLUSION}}", synthesis["summary"]):
+                    self.assertNotIn(value, page)
+                self.assertIn('<h2 id="rate-heading" class="rate">综合表现</h2>', page)
+                self.assertIn("<p>顺畅通过率=1/4 · 25.0%</p>", page)
+                headings = ("meta-heading", "rate-heading", "issues-heading", "cases-heading")
+                positions = [page.index('<section aria-labelledby="' + heading + '">') for heading in headings]
+                self.assertEqual(positions, sorted(positions))
+
     def test_summary_omits_limitations_section_but_case_keeps_it(self):
         for version in (1, 2):
             with self.subTest(version=version):
@@ -402,8 +437,8 @@ class ReportTests(unittest.TestCase):
         page = renderer.render_summary(self.manifest, self.reports, self.synthesis, set())
         self.assertNotIn('<script>alert("x")', page)
         self.assertNotIn("<img", page)
-        self.assertEqual(page.count("&lt;script&gt;"), 5)
-        self.assertEqual(page.count("{{TITLE}}"), 5)
+        self.assertEqual(page.count("&lt;script&gt;"), 4)
+        self.assertEqual(page.count("{{TITLE}}"), 4)
         parser = Links()
         parser.feed(page)
         self.assertEqual(len(parser.scripts), 1)

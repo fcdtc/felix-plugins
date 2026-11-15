@@ -325,7 +325,7 @@ def metadata(manifest):
     target = manifest["target"]
     rows = [(esc("生成时间"), esc(manifest["generated_at"])), (esc("目标 motif / agent / version"), esc(" / ".join(target.values())))]
     task = ('<a href="' + esc(manifest["task_url"]) + '" target="_blank" rel="noopener noreferrer">评测任务</a>') if manifest["task_url"] else "未提供"
-    rows.append(("任务入口", task))
+    rows.append(("评测 MIA 链接", task))
     rows.append(("样本清单范围", esc(manifest["scope_note"])))
     if agent_flow(manifest):
         audit = manifest["audit_scope"]
@@ -429,7 +429,7 @@ def render_summary(manifest, reports, synthesis, missing_pages):
             link = '<a href="cases/' + key + '.html">' + esc(str(case["ordinal"]) + " · " + case["title"]) + '</a>'
             examples.append('<li>' + link + paragraph(example["description"]) + '</li>')
         issues.append('<article><h3>' + esc(issue["priority"] + " · " + issue["title"]) + '</h3>' + paragraph("层级：" + issue["layer"]) + paragraph("问题：" + issue["problem"]) + '<p>具体 case（涉及 ' + str(len(examples)) + ' 个 case）：</p><ul>' + "".join(examples) + '</ul></article>')
-    return page("summary.html", dict(TITLE=esc(manifest["title"]), META=metadata(manifest), CONCLUSION=paragraph(synthesis["summary"]), RATE=esc("顺畅通过率=" + str(counts["pass"]) + "/" + str(n) + " · " + ratio(counts["pass"], n)), STATS=stats, ISSUES="".join(issues) or paragraph("未发现本次范围内的问题"), CASES=table(["序号", "Case", "重算结论", "判定依据 / 缺口", "业务错误数"], rows, ' id="case-table"')))
+    return page("summary.html", dict(TITLE=esc(manifest["title"]), META=metadata(manifest), RATE=esc("顺畅通过率=" + str(counts["pass"]) + "/" + str(n) + " · " + ratio(counts["pass"], n)), STATS=stats, ISSUES="".join(issues) or paragraph("未发现本次范围内的问题"), CASES=table(["序号", "Case", "重算结论", "判定依据 / 缺口", "业务错误数"], rows, ' id="case-table"')))
 
 
 def no_symlink(path):
