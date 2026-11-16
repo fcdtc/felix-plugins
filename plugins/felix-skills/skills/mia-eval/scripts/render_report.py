@@ -17,7 +17,8 @@ SLUG = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 SLOT = re.compile(r"\{\{([A-Z][A-Z0-9_]*)\}\}")
 METRICS = ("latency_ms", "model_calls", "tool_calls", "tool_failures", "business_errors", "retries", "prompt_tokens", "completion_tokens")
 LABELS = {"pass": "顺畅通过", "fail": "失败", "recovered": "恢复/挣扎", "insufficient": "证据不足"}
-CHECK_LABELS = {"identity": "执行版本和对象", "design": "设计要求", "tool_usage": "工具是否用对", "execution": "任务是否处理完", "completion_gate": "是否提前结束", "smoothness": "是否需要返工"}
+CHECK_LABELS = {"identity": "执行版本和对象", "design": "设计要求", "tool_usage": "工具使用案例检查", "execution": "任务是否处理完", "completion_gate": "是否提前结束", "smoothness": "是否需要返工"}
+CALL_STATUS_LABELS = {"pass": "正确", "fail": "错误", "unknown": "无法判断"}
 
 
 class ContractError(ValueError):
@@ -61,11 +62,12 @@ def number(value, where, integer=False, nullable=True):
 
 
 def schema(value):
-    require(type(value.get("schema_version")) is int and value["schema_version"] in (1, 2), "schema_version 必须为整数 1 或 2")
+    require(isinstance(value, dict), "报告/manifest 必须是对象")
+    require(type(value.get("schema_version")) is int and value["schema_version"] in (1, 2, 3), "schema_version 必须为整数 1、2 或 3")
 
 
 def agent_flow(manifest):
-    return manifest["schema_version"] == 2
+    return manifest["schema_version"] in (2, 3)
 
 
 def required_checks(manifest):
@@ -147,8 +149,9 @@ def member(manifest, key):
 
 
 def validate_case(value, manifest):
-    fields(value, "schema_version case_key title summary identity context verdict coverage checks timeline findings struggles metrics limitations evidence_index", "case")
     schema(value)
+    names = "schema_version case_key title summary identity context verdict coverage checks timeline findings struggles metrics limitations evidence_index"
+    fields(value, names + (" tool_usage_review" if value["schema_version"] == 3 else ""), "case")
     require(value["schema_version"] == manifest["schema_version"], "case 与 manifest schema_version 必须一致；历史报告须重新审计而非改标签")
     for key in ("case_key", "title", "summary"):
         text(value[key], key)
@@ -216,6 +219,25 @@ def validate_case(value, manifest):
     fields(value["metrics"], " ".join(METRICS), "metrics")
     for key in METRICS:
         number(value["metrics"][key], "metrics." + key)
+    if value["schema_version"] == 3:
+        review = value["tool_usage_review"]
+        fields(review, "inventory_complete calls", "tool_usage_review")
+        require(type(review["inventory_complete"]) is bool, "tool_usage_review.inventory_complete 必须是 boolean")
+        require(isinstance(review["calls"], list), "tool_usage_review.calls 必须是数组")
+        for call in review["calls"]:
+            fields(call, "message_id tool_call_id tool_name status reason evidence_refs", "tool_usage_review.call")
+            for key in ("message_id", "tool_call_id", "tool_name", "reason"):
+                text(call[key], "tool_usage_review.call." + key)
+            enum(call["status"], "pass fail unknown", "tool_usage_review.call.status")
+            refs(call, "tool_usage_review.call", call["status"] != "unknown")
+        unique([(call["message_id"], call["tool_call_id"]) for call in review["calls"]], "tool_usage_review 调用 ID (message_id, tool_call_id)")
+        total = value["metrics"]["tool_calls"]
+        number(total, "metrics.tool_calls", integer=True)
+        if total is not None:
+            if review["inventory_complete"]:
+                require(total == len(review["calls"]), "metrics.tool_calls 与完整 calls 数量必须一致")
+            else:
+                require(total >= len(review["calls"]), "metrics.tool_calls 不能小于已知 calls 数量下限")
     texts(value["limitations"], "limitations")
     if "fail" in (value["verdict"]["design"], value["verdict"]["execution"]):
         require(any(item["evidence_refs"] for group in ("checks", "timeline", "findings") for item in value[group]), "verdict fail 必须关联检查、轨迹或偏差证据")
@@ -340,6 +362,62 @@ def metadata(manifest):
     return '<p class="notice">' + esc(scope) + '</p>' + table(["元信息", "值"], rows)
 
 
+def call_counts(calls):
+    counts = Counter(call["status"] for call in calls)
+    return dict(total=len(calls), **{key: counts[key] for key in CALL_STATUS_LABELS})
+
+
+def tool_usage_stats(manifest, reports):
+    """只汇总选定 case 已列出的实际调用；缺报告也视为清单不完整。"""
+    require(manifest["schema_version"] == 3, "逐调用统计仅适用于 schema v3")
+    counts = Counter()
+    incomplete = 0
+    for case in manifest["cases"]:
+        report = reports.get(case["case_key"])
+        review = report["tool_usage_review"] if report else None
+        incomplete += review is None or not review["inventory_complete"]
+        if review:
+            counts.update(call_counts(review["calls"]))
+    return dict(total=counts["total"], **{key: counts[key] for key in CALL_STATUS_LABELS},
+                incomplete_cases=incomplete, inventory_complete=incomplete == 0)
+
+
+def tool_adherence_stats(manifest, reports):
+    """按全部选定案例的检查条目计数；每条pass/fail/unknown各计一次。"""
+    counts = Counter()
+    incomplete = 0
+    for case in manifest["cases"]:
+        report = reports.get(case["case_key"])
+        if report is None:
+            incomplete += 1
+            continue
+        checks = report["checks"]
+        counts.update(check["status"] for check in checks)
+        present = {check["id"] for check in checks}
+        incomplete += not set(case["required_check_ids"]).issubset(present)
+    return dict(total=sum(counts.values()), **{key: counts[key] for key in ("pass", "fail", "unknown")},
+                incomplete_cases=incomplete, checks_complete=incomplete == 0)
+
+
+def render_call_stats(counts, complete):
+    label = "工具正确使用率" if complete else "已知调用正确占比（非全量调用率）"
+    content = paragraph(label + "=" + str(counts["pass"]) + "/" + str(counts["total"]) + " · " + ratio(counts["pass"], counts["total"]))
+    content += paragraph("计算方式：正确实际调用数 / 全部实际调用数；按调用总数加权，不取案例平均。无法判断的已知调用保留在分母中；没有调用时为 N/A。")
+    return content + table(["调用统计", "数量"], [("总调用数" if complete else "已知调用数（总量下限）", str(counts["total"]))] + [(label, str(counts[key])) for key, label in CALL_STATUS_LABELS.items()])
+
+
+def render_call_review(manifest, report):
+    if manifest["schema_version"] != 3:
+        return ""
+    review = report["tool_usage_review"]
+    content = render_call_stats(call_counts(review["calls"]), review["inventory_complete"])
+    if not review["inventory_complete"]:
+        content = '<p class="notice">调用清单不完整：仅统计已知调用，数量是下限，无法声称全量工具正确使用率；未知总量不补写。</p>' + content
+    rows = [(str(i), esc(call["tool_name"]), esc(CALL_STATUS_LABELS[call["status"]]), esc(call["reason"])) for i, call in enumerate(review["calls"], 1)]
+    content += table(["调用顺序", "工具名", "判定", "原因"], rows) if rows else paragraph("没有已列出的实际调用。" if not review["inventory_complete"] else "本 case 没有实际工具调用。")
+    return '<section><h2>逐调用工具使用检查</h2>' + content + '</section>'
+
+
 def render_case(manifest, report):
     status, reasons = assess(manifest, report)
     ident = table(["身份字段", "目标", "实际运行"], [(esc(k), esc(manifest["target"][k]), esc(v or "未知")) for k, v in report["identity"].items()])
@@ -348,18 +426,20 @@ def render_case(manifest, report):
     scope_note = ("审计Agent流程、工具使用和结束时机；不评Tool是否Mock或真实持久化/送达。" if scope else "历史schema v1原口径；未按新标准重审。")
     ident += paragraph(scope_note) + (paragraph("Agent目的：" + scope["agent_purpose"]) if scope else "") + verdict + paragraph("脚本重算：" + LABELS[status]) + listing(reasons)
     context = "".join("<h3>" + label + "</h3>" + paragraph(report["context"][key] or "未提供") for key, label in (("input_summary", "输入概要"), ("output_summary", "输出概要"), ("annotations_summary", "评测标注（仅背景，不直接参与判断）")))
-    checks = table(["检查要求", "应该怎么做", "实际做了什么", "状态"], [(esc(c["requirement"]), esc(c["expected"]), esc(c["observed"]), esc(c["status"])) for c in report["checks"]])
+    checks = table(["检查要求", "应该怎么做", "实际做了什么", "状态"], [(esc("工具使用案例检查" if agent_flow(manifest) and c["id"] == "tool_usage" else c["requirement"]), esc(c["expected"]), esc(c["observed"]), esc(c["status"])) for c in report["checks"]])
     timeline = table(["步骤", "调用 / 动作", "结果", "耗时 ms"], [(esc(t["step"]), esc(t["action"]), esc(t["result"]), esc(fmt(t["duration_ms"]))) for t in sorted(report["timeline"], key=lambda t: t["step"])])
     struggles = table(["模式", "过程", "可避免", "优化"], [(esc(s["pattern"]), esc(s["description"]), "是" if s["avoidable"] else "否", esc(s["optimization"])) for s in report["struggles"]]) if report["struggles"] else paragraph("无已记录挣扎")
     actionable = scoped_findings(manifest, report)
     advice = table(["偏差", "修改建议", "回归验证"], [(esc(f["id"]), esc(f["suggestion"]), esc(f["regression"])) for f in sorted(actionable, key=lambda f: (f["severity"], f["id"]))]) if actionable else paragraph("无本次范围内修复建议")
     metrics = table(["资源指标", "值"], [(esc(key), esc(fmt(report["metrics"][key]))) for key in METRICS])
     coverage = paragraph("覆盖：baseline=" + report["coverage"]["baseline"] + "；trace=" + report["coverage"]["trace"] + "；thinking=" + report["coverage"]["thinking"] + "。思考缺失本身不阻断通过，顺畅度必须有调用轨迹支持。")
-    return page("case.html", dict(TITLE=esc(report["title"]), KEY=esc(report["case_key"]), SUMMARY=paragraph(report["summary"]), IDENTITY=ident, CONTEXT=context, CHECKS=checks, TIMELINE=timeline, STRUGGLES=struggles, ADVICE=advice, METRICS=metrics, LIMITATIONS=coverage + listing(report["limitations"])))
+    return page("case.html", dict(TITLE=esc(report["title"]), KEY=esc(report["case_key"]), SUMMARY=paragraph(report["summary"]), IDENTITY=ident, CONTEXT=context, CHECKS=checks, CALL_REVIEW=render_call_review(manifest, report), TIMELINE=timeline, STRUGGLES=struggles, ADVICE=advice, METRICS=metrics, LIMITATIONS=coverage + listing(report["limitations"])))
 
 
 def placeholder(manifest, case, reasons, report=None):
     missing = {"schema_version": manifest["schema_version"], "case_key": case["case_key"], "title": case["title"], "summary": "证据不足占位页；不是完整 case 评测报告。", "identity": manifest["target"], "context": {"input_summary": "", "output_summary": "", "annotations_summary": ""}, "verdict": {"design": "unknown", "execution": "unknown", "smoothness": "unknown"}, "coverage": {"baseline": "missing", "trace": "missing", "thinking": "missing"}, "checks": [], "timeline": [], "findings": [], "struggles": [], "metrics": {k: None for k in METRICS}, "limitations": list(reasons), "evidence_index": []}
+    if manifest["schema_version"] == 3:
+        missing["tool_usage_review"] = {"inventory_complete": False, "calls": []}
     missing["identity"] = {key: "" for key in manifest["target"]}
     if report is not None:
         missing["identity"] = report["identity"]
@@ -374,8 +454,7 @@ def ratio(count, total):
 def render_summary(manifest, reports, synthesis, missing_pages):
     rows = []
     counts = Counter({key: 0 for key in LABELS})
-    coverage = Counter()
-    axes = {axis: Counter() for axis in (("design", "execution", "tool_usage", "completion_gate") if agent_flow(manifest) else ("design", "execution"))}
+    axes = {axis: Counter() for axis in (("design", "execution", "completion_gate") if agent_flow(manifest) else ("design", "execution"))}
     for case in sorted(manifest["cases"], key=lambda c: c["ordinal"]):
         key = case["case_key"]
         report = reports.get(key)
@@ -404,22 +483,39 @@ def render_summary(manifest, reports, synthesis, missing_pages):
                 elif status in ("pass", "recovered") and declared == "pass":
                     axis_status = "pass"
             axes[axis][axis_status] += 1
-        if status != "insufficient":
-            coverage["analysis"] += 1
-        if report:
-            for field, complete in (("baseline", "complete"), ("trace", "complete"), ("thinking", "available")):
-                coverage[field] += report["coverage"][field] == complete
-            coverage["reports"] += 1
-        if key not in missing_pages and report:
-            coverage["pages"] += 1
         link = '<a href="cases/' + key + '.html">' + esc(case["title"]) + '</a>'
         rows.append((esc(case["ordinal"]), link + '<br><code>' + key + '</code>', '<span class="status">' + LABELS[status] + '</span>', esc("；".join(reasons)), esc(fmt(report["metrics"]["business_errors"]) if report else "未提供")))
     n = len(manifest["cases"])
     stats = '<div class="stats">' + "".join('<div class="stat"><span>' + label + '</span><strong>' + str(value) + '</strong></div>' for label, value in (("全部样本 N", n), ("顺畅通过 P", counts["pass"]), ("失败", counts["fail"]), ("恢复/挣扎", counts["recovered"]), ("证据不足", counts["insufficient"]))) + '</div>'
-    stats += table(["覆盖率（完整 / 全部样本）", "分子 / 分母", "比例"], [(label, str(coverage[key]) + " / " + str(n), ratio(coverage[key], n)) for key, label in (("analysis", "已可判定分析（非证据不足）"), ("reports", "JSON 报告"), ("pages", "原始 case 页面（不含占位）"), ("baseline", "设计基线"), ("trace", "调用轨迹"), ("thinking", "思考证据"))])
-    axis_labels = (("design", "设计遵循率"), ("execution", "流程完成率"), ("tool_usage", "工具正确使用率"), ("completion_gate", "结束时机正确率")) if agent_flow(manifest) else (("design", "保守确认设计遵循率"), ("execution", "保守确认任务完成率"))
-    stats += table(["分项指标", "通过 / 全部", "率", "失败", "unknown"], [(label, str(axes[axis]["pass"]) + " / " + str(n), ratio(axes[axis]["pass"], n), str(axes[axis]["fail"]), str(axes[axis]["unknown"])) for axis, label in axis_labels])
+    axis_labels = (("design", "设计遵循率"), ("execution", "流程完成率"), ("completion_gate", "结束时机正确率")) if agent_flow(manifest) else (("design", "保守确认设计遵循率"), ("execution", "保守确认任务完成率"))
+    metric_rows = [(label, str(axes[axis]["pass"]) + " / " + str(n), ratio(axes[axis]["pass"], n), str(axes[axis]["fail"]), str(axes[axis]["unknown"])) for axis, label in axis_labels]
+    adherence = tool_adherence_stats(manifest, reports)
+    adherence_label = "工具遵循率" if adherence["checks_complete"] else "已知检查通过占比（非完整工具遵循率）"
+    metric_rows.append((adherence_label, str(adherence["pass"]) + " / " + str(adherence["total"]), ratio(adherence["pass"], adherence["total"]), str(adherence["fail"]), str(adherence["unknown"])))
+    stats += table(["分项指标", "通过 / 全部", "率", "失败", "unknown"], metric_rows)
+    stats += paragraph("工具遵循率计算方式：所有选定案例的 checks 中状态为 pass 的条数 / 所有选定案例的 checks 总条数；包含预期与实际检查中的全部条目，不按检查ID或类型筛选，不平均各案例比例，unknown 留在分母。零条检查为 N/A。")
+    if not adherence["checks_complete"]:
+        stats += paragraph(str(adherence["incomplete_cases"]) + " 个 case 缺报告或必要检查；只展示已知检查条数和通过占比，不补造缺失条目，也不声称完整工具遵循率。")
     stats += paragraph("各项按自身判定及同名检查分别统计；身份和基线/轨迹完整时，本项通过不因另一项失败而变unknown。流程完成包括规则允许的静默和受阻收尾，不要求后端真实落盘；平台背景发现不参与Agent通过率。" if agent_flow(manifest) else "历史三轴率保留原保守口径：整体失败时未失败轴仍为unknown。旧报告没有按新标准重审，不用于推算Agent流程通过率。")
+    if manifest["schema_version"] == 3:
+        usage = tool_usage_stats(manifest, reports)
+        stats += '<h3>工具调用正确性</h3>'
+        if not usage["inventory_complete"]:
+            stats += '<p class="notice">' + str(usage["incomplete_cases"]) + ' 个 case 的调用清单不完整（含缺报告）；仅统计已知调用，数量是下限，无法声称全部选定案例的全量工具正确使用率；未知总量不补写。</p>'
+        stats += render_call_stats(usage, usage["inventory_complete"])
+        stats += paragraph("调用清单不完整的 case 数：" + str(usage["incomplete_cases"]) + "。工具正确使用率按实际调用次数计算，工具遵循率按预期与实际检查条数计算；案例检查继续参与整体判定，三者不互相替代。")
+        tool_rows = []
+        grouped = {}
+        for case in sorted(manifest["cases"], key=lambda c: c["ordinal"]):
+            report = reports.get(case["case_key"])
+            review = report["tool_usage_review"] if report else None
+            tool_rows.append((esc(case["ordinal"]), '<a href="cases/' + case["case_key"] + '.html">' + esc(case["title"]) + '</a>', str(len(review["calls"])) if review else "未知", "完整" if review and review["inventory_complete"] else "不完整；仅已知下限"))
+            if review:
+                for call in review["calls"]:
+                    grouped.setdefault(call["tool_name"], []).append(call)
+        if grouped:
+            stats += table(["工具名", "已知调用数", "正确", "错误", "无法判断", "正确 / 已知调用"], [(esc(name), str(counts["total"]), str(counts["pass"]), str(counts["fail"]), str(counts["unknown"]), ratio(counts["pass"], counts["total"])) for name, calls in sorted(grouped.items()) for counts in [call_counts(calls)]])
+        stats += table(["序号", "Case", "已列调用数", "调用清单"], tool_rows)
     issues = []
     for issue in sorted(synthesis["issues"], key=lambda item: (item["priority"], item["id"])):
         examples = []
@@ -517,10 +613,13 @@ def summary_command(args):
         save(path, body, args.overwrite)
     save(out, content, args.overwrite)
     counts = Counter(assess(manifest, reports.get(c["case_key"]), c["case_key"] in missing_pages)[0] for c in manifest["cases"])
-    return {"out": str(out), "total": len(manifest["cases"]), "counts": {key: counts[key] for key in LABELS}, "placeholder_cases": sorted(missing_pages)}
+    result = {"out": str(out), "total": len(manifest["cases"]), "counts": {key: counts[key] for key in LABELS}, "placeholder_cases": sorted(missing_pages), "tool_adherence": tool_adherence_stats(manifest, reports)}
+    if manifest["schema_version"] == 3:
+        result["tool_usage"] = tool_usage_stats(manifest, reports)
+    return result
 
 
-def demo_data(version=2):
+def demo_data(version=3):
     target = {"motif_id": "synthetic-motif", "agent_id": "synthetic-agent", "version": "demo-v1"}
     manifest = {"schema_version": 1, "title": "合成匿名演示", "task_url": "", "generated_at": "2026-01-01T00:00:00Z", "scope_complete": True, "scope_note": "仅四个匿名合成样本，非真实任务", "target": target, "cases": [{"case_key": key, "ordinal": i + 1, "title": "合成示例 · " + LABELS[key], "session_id": "synthetic-session-" + key, "message_ids": ["synthetic-message"], "required_check_ids": ["identity", "design", "execution", "smoothness", "result"]} for i, key in enumerate(LABELS)]}
     base = {"schema_version": 1, "case_key": "pass", "title": "合成示例", "summary": "全部数据均为匿名合成，仅展示固定模板，不代表真实评测。", "identity": target, "context": {"input_summary": "合成用户请求返回两项学习建议。", "output_summary": "合成返回包含两项建议。", "annotations_summary": "合成标注仅作为背景。"}, "verdict": {"design": "pass", "execution": "pass", "smoothness": "smooth"}, "coverage": {"baseline": "complete", "trace": "complete", "thinking": "missing"}, "checks": [{"id": "result", "requirement": "返回两项建议", "expected": "2 项", "observed": "2 项", "status": "pass", "evidence_refs": ["e-result"]}], "timeline": [{"step": 1, "action": "合成工具调用", "result": "返回 2 项", "duration_ms": 120, "evidence_refs": ["e-result"]}], "findings": [], "struggles": [], "metrics": {key: None for key in METRICS}, "limitations": ["仅模板演示，未连接任何平台或开展真实评测。"], "evidence_index": [{"id": "e-result", "source": "synthetic-trace", "locator": "合成事件 1", "excerpt": "合成返回：项目 A；项目 B。"}]}
@@ -544,25 +643,39 @@ def demo_data(version=2):
     reports["insufficient"]["verdict"]["execution"] = "unknown"
     reports["insufficient"]["checks"][0].update(status="unknown", evidence_refs=[])
     synthesis = {"summary": "四个合成示例中，一个顺利完成，一个漏掉了第二项建议，一个重试后完成，一个没有足够记录判断是否完成。顺畅通过率由脚本计算。", "issues": [{"id": "issue-1", "priority": "P1", "title": "要求返回两项建议，只返回了一项", "layer": "Agent", "problem": "用户需要两项学习建议，Agent 只返回了第一项就结束，第二项没有给出。用户拿到的内容少了一项，任务没有做完。", "examples": [{"case_key": "fail", "description": "这个合成 case 要求返回项目 A 和项目 B 的学习建议，实际只返回项目 A，没有项目 B 的建议。"}]}]}
-    if version == 2:
-        manifest["schema_version"] = 2
+    require(type(version) is int and version in (1, 2, 3), "demo仅支持schema 1、2 或 3")
+    if version in (2, 3):
+        manifest["schema_version"] = version
         manifest["audit_scope"] = {"profile": "agent_flow", "focus": ["完整流程", "正确工具使用", "最终结束时机"], "agent_purpose": "处理合成请求中的两项学习建议", "completion_criteria": ["每项建议有结果或规则允许的受阻结论", "最终结束前完成全部独立项"], "exclusions": ["Tool是否Mock", "真实持久化与实际送达"]}
         for case in manifest["cases"]:
             case["required_check_ids"].extend(["tool_usage", "completion_gate"])
         for report in reports.values():
-            report["schema_version"] = 2
+            report["schema_version"] = version
             for key in ("tool_usage", "completion_gate"):
                 report["checks"].append({"id": key, "requirement": "合成 " + key + " 检查", "expected": "工具与流程结束符合合成规则", "observed": "合成轨迹支持检查", "status": "pass", "evidence_refs": ["e-result"]})
             for finding in report["findings"]:
                 finding["scope"] = "agent_flow"
-    else:
-        require(version == 1, "demo仅支持schema 1或2")
+    if version == 3:
+        for report in reports.values():
+            for check in report["checks"]:
+                check["requirement"] = CHECK_LABELS.get(check["id"], check["requirement"])
+            report["tool_usage_review"] = {"inventory_complete": True, "calls": [{"message_id": "synthetic-message", "tool_call_id": "synthetic-call-1", "tool_name": "synthetic-tool", "status": "pass", "reason": "请求符合合成工具约定，正确处理回包并完成必要后续。", "evidence_refs": ["e-result"]}]}
+            report["metrics"]["tool_calls"] = 1
+        retry = reports["recovered"]
+        retry["tool_usage_review"]["calls"][0].update(status="fail", reason="首次调用参数不符合约定，工具拒绝请求；修正后成功不抹去本次错误。")
+        retry["tool_usage_review"]["calls"].append({"message_id": "synthetic-message", "tool_call_id": "synthetic-call-2", "tool_name": "synthetic-tool", "status": "pass", "reason": "修正参数后重新调用，取得结果并正确处理。", "evidence_refs": ["e-result"]})
+        retry["metrics"]["tool_calls"] = 2
+        retry["struggles"][0]["description"] = "首次参数错误被拒绝，修正参数后重试成功。"
+        retry["evidence_index"][0]["excerpt"] = "合成轨迹：首次参数错误被拒绝；修正后重新调用，返回两项。"
+        reports["insufficient"]["tool_usage_review"]["inventory_complete"] = False
+        reports["insufficient"]["tool_usage_review"]["calls"][0].update(status="unknown", reason="请求记录可见，但没有取得回包与后续处理记录。", evidence_refs=[])
+        reports["insufficient"]["metrics"]["tool_calls"] = None
     return manifest, reports, synthesis
 
 
-def axis_examples():
+def axis_examples(version=3):
     """匿名交叉判定示例；不改变既有demo四类样本与统计。"""
-    manifest, reports, _ = demo_data(version=2)
+    manifest, reports, _ = demo_data(version=version)
     report = copy.deepcopy(reports["pass"])
     report["summary"] = "查重失败后仍新增内容，但生成和通知均有结果，没有其他事项遗漏。"
     report["verdict"]["design"] = "fail"
@@ -584,12 +697,28 @@ def axis_examples():
     prefetch["summary"] = "先预读通知规则，实际发送等待生成成功后才执行。"
     prefetch["timeline"][0].update(action="合成规则预读、生成及通知", result="预读无业务动作；生成saved后通知success")
     prefetch["evidence_index"][0]["excerpt"] = "合成顺序：skill_read；生成saved；push成功；最终结束。"
+    if version == 3:
+        for item in (admission, unfinished):
+            item["tool_usage_review"] = {"inventory_complete": True, "calls": [
+                {"message_id": "synthetic-message", "tool_call_id": "synthetic-query", "tool_name": "history_query", "status": "pass", "reason": "查重请求正确，服务不可用本身不是调用错误。", "evidence_refs": ["e-result"]},
+                {"message_id": "synthetic-message", "tool_call_id": "synthetic-generate", "tool_name": "generate", "status": "fail", "reason": "未取得必要查重依据就首次生成新增内容。", "evidence_refs": ["e-result"]},
+                {"message_id": "synthetic-message", "tool_call_id": "synthetic-push", "tool_name": "push", "status": "pass", "reason": "通知请求及回包处理正确；此前生成错误不连带改变本次调用判定。", "evidence_refs": ["e-result"]},
+            ]}
+            item["metrics"]["tool_calls"] = 3
+        prefetch["tool_usage_review"] = {"inventory_complete": True, "calls": [
+            {"message_id": "synthetic-message", "tool_call_id": "synthetic-read", "tool_name": "skill_read", "status": "pass", "reason": "预读必要规则，没有提前执行业务动作。", "evidence_refs": ["e-result"]},
+            {"message_id": "synthetic-message", "tool_call_id": "synthetic-generate", "tool_name": "generate", "status": "pass", "reason": "前置条件满足后生成内容并取得成功结果。", "evidence_refs": ["e-result"]},
+            {"message_id": "synthetic-message", "tool_call_id": "synthetic-push", "tool_name": "push", "status": "pass", "reason": "生成成功后发送通知，正确处理回包。", "evidence_refs": ["e-result"]},
+        ]}
+        prefetch["metrics"]["tool_calls"] = 3
     examples = []
     for key, item in (("admission-fails-but-closed", admission), ("unfinished-item", unfinished), ("rule-prefetch", prefetch)):
         validate_case(item, manifest)
         examples.append({"id": key, "description": item["summary"], "verdict": item["verdict"],
                          "check_statuses": {c["id"]: c["status"] for c in item["checks"]},
                          "classification": assess(manifest, item)[0]})
+        if version == 3:
+            examples[-1]["tool_usage_review"] = item["tool_usage_review"]
     return examples
 
 

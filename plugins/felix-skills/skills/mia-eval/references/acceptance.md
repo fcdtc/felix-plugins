@@ -42,18 +42,31 @@ git diff --check
 | 多轮/重试 | 同case全轮证据审计，保留原失败，不按日志事件数量扩分母 |
 | 模板更改 | 所有逐case及汇总由本轮冻结渲染器生成；后续源码更新不替换正在运行的快照；需按新版重建旧汇总时另行明确处理，旧HTML与选定JSON/模板不一致时必须明确重建 |
 | case阅读表达 | 检查要求用中文，应该怎么做/实际做了什么用具体自然短句；页面不展示检查内部ID、证据列、证据短引用表及设计与业务偏差区块；JSON证据和findings校验、判定及问题归并保持有效 |
-| 汇总布局 | 元信息保留manifest.task_url的评测MIA链接，未提供时如实显示；统计区块标题为“综合表现”，保留通过率数值与各项统计；省略固定统计与证据说明段、独立结论区块，其余按问题汇总、全部case排列 |
+| 汇总布局 | 元信息保留manifest.task_url的评测MIA链接，未提供时如实显示；统计区块标题为“综合表现”，保留通过率数值与各项统计；删除覆盖率表及其六行，省略固定统计与证据说明段、独立结论区块，其余按问题汇总、全部case排列；详情覆盖与限制和取证校验保留 |
 | 问题汇总 | 标题为“问题汇总”，按P0/P1/P2排序；每条仅层级、问题和具体case经过及链接，不出现修改建议或验证办法；无问题时明确显示未发现本次范围内的问题 |
 | 汇总数据契约 | synthesis仅summary/issues，issue仅id/priority/title/layer/problem/examples；每个example必须有case_key/description，引用清单内case且同一问题内不重复；拒绝旧建议格式及change/validation字段 |
 | 汇总判定依据 | 失败case显示具体失败检查的实际行为及已确认问题，恢复case显示重试或返工经过；缺记录时用中文说明缺什么，不用内部检查键或“已确认实质偏差”等套话代替解释 |
 | 问题表述静态走查 | 主线程和worker均读取SKILL.md“报告表达”；标题和正文直说原要求、实际行为和影响；专业术语仅限待评测Agent设计已有用词，不引入额外术语或创造概念；具体case有经过，辅助例子与实际记录分开 |
-| v2 Agent流程口径 | manifest有Agent目的、关注点、完成标准和排除项；六项必查包含工具使用与结束时机 |
+| v2/v3 Agent流程口径 | manifest有Agent目的、关注点、完成标准和排除项；六项必查包含工具使用案例检查与结束时机；v3 manifest结构沿用v2 |
 | Mock正常成功回包 | 请求、回包处理及后续符合可见契约可通过，不因后端不落盘降级 |
 | 平台背景发现 | finding.scope=platform_context不改变Agent分类；agent_flow confirmed仍阻止通过 |
 | 首次不可用后合法受阻 | 独立项继续且如实交接可顺畅通过，错误计数不自动判挣扎 |
 | 提前最终response | 仍有可做项或必要调用仅规划未执行时completion_gate失败；阶段进度文本不算结束 |
 | 独立分项指标 | 整体执行失败不抹去已证实设计通过；工具使用、结束时机单独显示 |
-| 历史v1报告 | 保留原判定和历史口径提示；v1/v2不能混装或改版本号冒充重审 |
+| 历史v1/v2报告 | 原判定与输入契约不变，不伪造新调用数据；新模板可按已有checks统计工具遵循率，但不自动重写历史文件；v1/v2/v3不能混装或改版本号冒充重审 |
+| v3逐调用契约 | tool_usage_review必需，仅inventory_complete/calls；调用项仅message_id/tool_call_id/tool_name/status/reason/evidence_refs，状态pass/fail/unknown，复合ID唯一，pass/fail必有现有证据引用；重复ID、缺引用、未知引用、字段或类型错误拒绝 |
+| v3全量调用核对 | worker契约和主线程按全部packet索引核对调用集合无缺项，不只核对数量；完整清单metrics.tool_calls非null必须等于calls长度，不完整不得小于已知长度，未知总量不补写 |
+| v3按总调用加权 | 一个case 1次调用错误、另一个case 9次调用正确，9/10=90%，不是案例平均50%；design/execution/completion_gate仍案例分母 |
+| 初错及retry | 首次错误fail与修正pass各计一次，首次fail保留；可恢复错误不自动整体fail，分类继续由checks/findings/struggles决定 |
+| 平台失败与合理核验 | 请求和处理正确即使平台失败也可pass；Mock、工程注入不算模型调用错误；前置违规只归首次对应生成/纯消息push，不连带正确历史查询或下游通知 |
+| unknown及空调用 | unknown保留已知调用分母；完整零调用与零case均N/A，不显示100% |
+| 不完整调用清单 | 显著展示不完整case数（含缺报告）、已知调用下限和已知占比，无法声称全量工具正确使用率；metrics不补入未知分母 |
+| v3报告展示 | 总调用、正确、错误、无法判断、不完整case数、调用公式可见；同名check明确工具使用案例检查；case表仅顺序/工具名/中文判定/原因，不展示敏感ID和证据原文 |
+| 新冻结及demo | 默认demo和freeze完整schema v3契约，demo_data(version=1/2/3)兼容，axis_examples新版含调用判定；冻结调用文档及哈希完整，manifest/报告版本一致 |
+| v3HTML安全及互链 | 调用原因和工具名转义；详情/返回/每case调用计数互链有效；历史页无伪造逐调用数据 |
+| 工具遵循率按检查条数 | 全部选定case的checks中pass数/全部checks条数；不筛选ID或类型，同ID跨case各计一次，不平均case比例；1条fail加另一case9条pass为9/10=90% |
+| 检查unknown与缺项 | unknown实际条目保留分母；零条或零case为N/A；缺报告或必要检查只报已知占比与缺项数，不造未知条目，调用和verdict不覆盖条目计数 |
+| 两种工具指标独立 | 工具遵循率按checks、工具正确使用率按calls；新汇总不再显示工具使用案例通过占比，同名必要check保留并计入全部checks；summary输出tool_adherence可复算 |
 
 浏览器可用时对合成页做一次视觉检查：桌面/手机可读，暗色可辨，筛选有文本标签，详情与返回链接可用，表格溢出仅在容器内。模板无网络依赖；浏览器缺失时说明未做视觉验收。
 

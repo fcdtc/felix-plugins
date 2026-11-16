@@ -76,7 +76,7 @@ class ReportTests(unittest.TestCase):
                 self.assertTrue((file.parent / link).is_file(), (file, link))
 
     def test_summary_shows_issues_and_concrete_cases_without_advice(self):
-        for version in (1, 2):
+        for version in (1, 2, 3):
             with self.subTest(version=version):
                 manifest, reports, synthesis = renderer.demo_data(version=version)
                 self.assertEqual(set(synthesis), {"summary", "issues"})
@@ -105,7 +105,7 @@ class ReportTests(unittest.TestCase):
         self.assertIn("未发现本次范围内的问题", page)
 
     def test_summary_case_reasons_explain_the_actual_problem(self):
-        for version in (1, 2):
+        for version in (1, 2, 3):
             with self.subTest(version=version):
                 manifest, reports, synthesis = renderer.demo_data(version=version)
                 reports["fail"]["checks"][0]["observed"] = "只返回了项目 A，项目 B 的建议没有给出。"
@@ -118,7 +118,7 @@ class ReportTests(unittest.TestCase):
 
     def test_summary_metadata_keeps_evaluation_mia_link(self):
         task_url = "https://mia.example.invalid/evaluation/task/task-123?space_id=space-456&view=details"
-        for version in (1, 2):
+        for version in (1, 2, 3):
             with self.subTest(version=version):
                 manifest, reports, synthesis = renderer.demo_data(version=version)
                 manifest["task_url"] = task_url
@@ -137,7 +137,7 @@ class ReportTests(unittest.TestCase):
         self.assertIn("<td>评测 MIA 链接</td><td>未提供</td>", page)
 
     def test_summary_omits_methodology_notes_and_conclusion(self):
-        for version in (1, 2):
+        for version in (1, 2, 3):
             with self.subTest(version=version):
                 manifest, reports, synthesis = renderer.demo_data(version=version)
                 synthesis["summary"] = "不应在汇总页展示的独立结论正文"
@@ -152,7 +152,7 @@ class ReportTests(unittest.TestCase):
                 self.assertEqual(positions, sorted(positions))
 
     def test_summary_omits_limitations_section_but_case_keeps_it(self):
-        for version in (1, 2):
+        for version in (1, 2, 3):
             with self.subTest(version=version):
                 manifest, reports, synthesis = renderer.demo_data(version=version)
                 report = reports["insufficient"]
@@ -168,7 +168,7 @@ class ReportTests(unittest.TestCase):
                 self.assertIn("仅详情展示的限制说明", detail)
 
     def test_case_shows_plain_checks_without_evidence_or_findings(self):
-        for version in (1, 2):
+        for version in (1, 2, 3):
             with self.subTest(version=version):
                 manifest, reports, _ = renderer.demo_data(version=version)
                 report = reports["fail"]
@@ -447,7 +447,7 @@ class ReportTests(unittest.TestCase):
     def test_partial_scope_and_axis_unknown_visible(self):
         self.manifest["scope_complete"] = False
         page = renderer.render_summary(self.manifest, self.reports, self.synthesis, set())
-        for text in ("部分清单，仅对已取得样本统计", "设计遵循率", "任务完成率", "unknown", "思考证据", "已可判定分析"):
+        for text in ("部分清单，仅对已取得样本统计", "设计遵循率", "任务完成率", "unknown", "工具遵循率"):
             self.assertIn(text, page)
 
     def test_agent_flow_mock_context_and_legal_block_are_not_failures(self):
@@ -522,13 +522,291 @@ class ReportTests(unittest.TestCase):
         report["struggles"] = reports["recovered"]["struggles"]
         self.assertEqual(renderer.assess(manifest, report)[0], "recovered")
 
+    def call_fixture(self, statuses_by_case):
+        manifest, reports, _ = renderer.demo_data(version=3)
+        selected = manifest["cases"][:len(statuses_by_case)]
+        base = reports["pass"]
+        reports = {}
+        for case, statuses in zip(selected, statuses_by_case):
+            report = copy.deepcopy(base)
+            report.update(case_key=case["case_key"], title=case["title"])
+            report["tool_usage_review"] = {"inventory_complete": True, "calls": [
+                {"message_id": "synthetic-message", "tool_call_id": "call-%d" % i,
+                 "tool_name": "synthetic-tool", "status": status,
+                 "reason": "合成调用符合规则。" if status == "pass" else "合成参数错误。" if status == "fail" else "缺少合成回包记录。",
+                 "evidence_refs": ["e-result"] if status != "unknown" else []}
+                for i, status in enumerate(statuses, 1)
+            ]}
+            report["metrics"]["tool_calls"] = len(statuses)
+            reports[case["case_key"]] = report
+        manifest["cases"] = selected
+        renderer.validate_manifest(manifest)
+        for report in reports.values():
+            renderer.validate_case(report, manifest)
+        return manifest, reports, {"summary": "只用于调用统计回归。", "issues": []}
+
+    def test_tool_usage_weights_all_calls_not_case_average(self):
+        manifest, reports, synthesis = self.call_fixture([["fail"], ["pass"] * 9])
+        usage = renderer.tool_usage_stats(manifest, reports)
+        self.assertEqual(usage, {"total": 10, "pass": 9, "fail": 1, "unknown": 0, "incomplete_cases": 0, "inventory_complete": True})
+        page = renderer.render_summary(manifest, reports, synthesis, set())
+        self.assertIn("工具正确使用率=9/10 · 90.0%", page)
+        self.assertNotIn("50.0%", page)
+        self.assertIn("按调用总数加权，不取案例平均", page)
+        checks_total = sum(len(report["checks"]) for report in reports.values())
+        self.assertIn("工具遵循率</td><td>" + str(checks_total) + " / " + str(checks_total), page)
+        for axis in ("设计遵循率", "流程完成率", "结束时机正确率"):
+            self.assertIn(axis + "</td><td>2 / 2", page)
+        self.assertIn("总调用数</td><td>10", page)
+        for label, count in (("正确", 9), ("错误", 1), ("无法判断", 0)):
+            self.assertIn(label + "</td><td>" + str(count), page)
+
+    def test_tool_usage_retry_fail_and_pass_keep_original_and_recovery(self):
+        manifest, reports, _ = renderer.demo_data(version=3)
+        report = reports["recovered"]
+        self.assertEqual([c["status"] for c in report["tool_usage_review"]["calls"]], ["fail", "pass"])
+        self.assertEqual(renderer.assess(manifest, report)[0], "recovered")
+        one = copy.deepcopy(manifest)
+        one["cases"] = [next(c for c in manifest["cases"] if c["case_key"] == "recovered")]
+        page = renderer.render_summary(one, {"recovered": report}, {"summary": "合成", "issues": []}, set())
+        self.assertIn("工具正确使用率=1/2 · 50.0%", page)
+        self.assertIn("工具遵循率</td><td>" + str(len(report["checks"])) + " / " + str(len(report["checks"])), page)
+        report["tool_usage_review"]["calls"][0]["reason"] = "初次参数错误；修正成功不抹去首次失败。"
+        renderer.validate_case(report, manifest)
+        self.assertEqual(report["tool_usage_review"]["calls"][0]["status"], "fail")
+
+    def test_tool_usage_platform_failure_can_pass_and_inventory_is_not_verdict(self):
+        manifest, reports, _ = self.call_fixture([["pass"]])
+        report = reports["pass"]
+        report["metrics"]["tool_failures"] = 1
+        report["metrics"]["business_errors"] = 1
+        report["tool_usage_review"]["calls"][0]["reason"] = "请求正确；平台不可用后按规则交接受阻并继续独立项。"
+        renderer.validate_case(report, manifest)
+        self.assertEqual(renderer.assess(manifest, report)[0], "pass")
+        self.assertEqual(renderer.tool_usage_stats(manifest, reports)["pass"], 1)
+        report["tool_usage_review"]["calls"][0].update(status="fail", reason="首次参数错误。")
+        # 调用 fail 自身不能替代原检查、findings 和 struggles 的整体分类。
+        self.assertEqual(renderer.assess(manifest, report)[0], "pass")
+        report["tool_usage_review"]["inventory_complete"] = False
+        self.assertEqual(renderer.assess(manifest, report)[0], "pass")
+
+    def test_tool_usage_unknown_keeps_known_denominator(self):
+        manifest, reports, synthesis = self.call_fixture([["pass", "unknown"]])
+        usage = renderer.tool_usage_stats(manifest, reports)
+        self.assertEqual((usage["total"], usage["pass"], usage["unknown"]), (2, 1, 1))
+        page = renderer.render_summary(manifest, reports, synthesis, set())
+        self.assertIn("工具正确使用率=1/2 · 50.0%", page)
+        self.assertIn("无法判断</td><td>1", page)
+        detail = renderer.render_case(manifest, reports["pass"])
+        self.assertIn("无法判断", detail)
+        self.assertIn("缺少合成回包记录", detail)
+
+    def test_tool_usage_zero_calls_and_zero_cases_are_na(self):
+        manifest, reports, synthesis = self.call_fixture([[]])
+        report = reports["pass"]
+        page = renderer.render_summary(manifest, reports, synthesis, set())
+        self.assertIn("工具正确使用率=0/0 · N/A", page)
+        self.assertIn("工具正确使用率=0/0 · N/A", renderer.render_case(manifest, report))
+        manifest["cases"] = []
+        page = renderer.render_summary(manifest, {}, synthesis, set())
+        self.assertIn("工具正确使用率=0/0 · N/A", page)
+        self.assertNotIn("100.0%", page)
+
+    def test_tool_usage_partial_inventory_warns_and_never_fills_unknown_total(self):
+        manifest, reports, synthesis = self.call_fixture([["pass", "unknown"], ["pass"]])
+        report = reports["pass"]
+        report["tool_usage_review"]["inventory_complete"] = False
+        report["metrics"]["tool_calls"] = 20
+        renderer.validate_case(report, manifest)
+        page = renderer.render_summary(manifest, reports, synthesis, set())
+        self.assertIn("1 个 case 的调用清单不完整", page)
+        self.assertIn("已知调用正确占比（非全量调用率）=2/3 · 66.7%", page)
+        self.assertIn("已知调用数（总量下限）</td><td>3", page)
+        self.assertIn("无法声称全部选定案例的全量工具正确使用率", page)
+        self.assertIn("未知总量不补写", page)
+        self.assertNotIn("工具正确使用率=", page)
+        self.assertNotIn("2/21", page)
+        self.assertIn("调用清单不完整", renderer.render_case(manifest, report))
+        usage = renderer.tool_usage_stats(manifest, {"fail": reports["fail"]})
+        self.assertEqual((usage["total"], usage["incomplete_cases"], usage["inventory_complete"]), (1, 1, False))
+        report["tool_usage_review"]["calls"] = []
+        report["metrics"]["tool_calls"] = None
+        renderer.validate_case(report, manifest)
+        self.assertIn("已知调用正确占比（非全量调用率）=0/0 · N/A", renderer.render_case(manifest, report))
+        self.assertNotIn("本 case 没有实际工具调用", renderer.render_case(manifest, report))
+
+    def test_tool_usage_strict_fields_ids_refs_status_and_inventory(self):
+        manifest, reports, _ = self.call_fixture([["pass"]])
+        base = reports["pass"]
+        mutations = (
+            ("缺review", lambda r: r.pop("tool_usage_review")),
+            ("额外review字段", lambda r: r["tool_usage_review"].update(extra=1)),
+            ("非布尔完整性", lambda r: r["tool_usage_review"].update(inventory_complete=1)),
+            ("非数组calls", lambda r: r["tool_usage_review"].update(calls={})),
+            ("额外调用字段", lambda r: r["tool_usage_review"]["calls"][0].update(extra="bad")),
+            ("缺原因", lambda r: r["tool_usage_review"]["calls"][0].pop("reason")),
+            ("数字ID", lambda r: r["tool_usage_review"]["calls"][0].update(message_id=1)),
+            ("空ID", lambda r: r["tool_usage_review"]["calls"][0].update(tool_call_id="")),
+            ("空工具名", lambda r: r["tool_usage_review"]["calls"][0].update(tool_name=" ")),
+            ("空原因", lambda r: r["tool_usage_review"]["calls"][0].update(reason=" ")),
+            ("未知状态", lambda r: r["tool_usage_review"]["calls"][0].update(status="success")),
+            ("pass缺引用", lambda r: r["tool_usage_review"]["calls"][0].update(evidence_refs=[])),
+            ("fail缺引用", lambda r: r["tool_usage_review"]["calls"][0].update(status="fail", evidence_refs=[])),
+            ("引用不存在", lambda r: r["tool_usage_review"]["calls"][0].update(evidence_refs=["not-present"])),
+            ("非数组引用", lambda r: r["tool_usage_review"]["calls"][0].update(evidence_refs="e-result")),
+            ("重复引用", lambda r: r["tool_usage_review"]["calls"][0].update(evidence_refs=["e-result", "e-result"])),
+            ("重复调用键", lambda r: r["tool_usage_review"]["calls"].append(copy.deepcopy(r["tool_usage_review"]["calls"][0]))),
+            ("完整数超出", lambda r: r["metrics"].update(tool_calls=2)),
+            ("完整数不足", lambda r: r["metrics"].update(tool_calls=0)),
+            ("非整数总量", lambda r: r["metrics"].update(tool_calls=1.5)),
+        )
+        for label, mutate in mutations:
+            with self.subTest(label=label):
+                report = copy.deepcopy(base)
+                mutate(report)
+                with self.assertRaises(renderer.ContractError):
+                    renderer.validate_case(report, manifest)
+        report = copy.deepcopy(base)
+        report["tool_usage_review"]["inventory_complete"] = False
+        report["metrics"]["tool_calls"] = 0
+        with self.assertRaisesRegex(renderer.ContractError, "下限"):
+            renderer.validate_case(report, manifest)
+        report["metrics"]["tool_calls"] = None
+        renderer.validate_case(report, manifest)
+        report["tool_usage_review"]["inventory_complete"] = True
+        renderer.validate_case(report, manifest)
+        report["tool_usage_review"]["calls"].append(dict(report["tool_usage_review"]["calls"][0], message_id="second-message"))
+        renderer.validate_case(report, manifest)  # 跨消息相同tool_call_id允许，复合键不同。
+        self.assertEqual(renderer.tool_usage_stats(manifest, {"pass": report})["total"], 2)
+
+    def test_tool_usage_versions_are_not_upgraded_or_mixed(self):
+        for version in (1, 2, 3):
+            manifest, reports, synthesis = renderer.demo_data(version=version)
+            renderer.validate_manifest(manifest)
+            for report in reports.values():
+                renderer.validate_case(report, manifest)
+                self.assertEqual(report["schema_version"], version)
+            page = renderer.render_summary(manifest, reports, synthesis, set())
+            self.assertEqual(renderer.agent_flow(manifest), version in (2, 3))
+            if version == 2:
+                self.assertIn("工具遵循率", page)
+                self.assertNotIn("工具使用无误案例占比（历史口径）", page)
+                self.assertNotIn("工具正确使用率", page)
+                self.assertNotIn("逐调用工具使用检查", renderer.render_case(manifest, reports["pass"]))
+            if version < 3:
+                self.assertNotIn("tool_usage_review", reports["pass"])
+                with self.assertRaises(renderer.ContractError):
+                    renderer.tool_usage_stats(manifest, reports)
+        new_manifest, new_reports, _ = renderer.demo_data(version=3)
+        for historical in (1, 2):
+            old_manifest, old_reports, _ = renderer.demo_data(version=historical)
+            with self.assertRaisesRegex(renderer.ContractError, "schema_version"):
+                renderer.validate_case(old_reports["pass"], new_manifest)
+            with self.assertRaisesRegex(renderer.ContractError, "schema_version"):
+                renderer.validate_case(new_reports["pass"], old_manifest)
+        for version in (True, 0, 4, "3"):
+            with self.assertRaises(renderer.ContractError):
+                renderer.demo_data(version=version)
+
+    def test_tool_usage_html_escapes_text_hides_sensitive_ids_and_links(self):
+        manifest, reports, synthesis = self.call_fixture([["pass"]])
+        call = reports["pass"]["tool_usage_review"]["calls"][0]
+        call.update(message_id="sensitive-message-not-for-html", tool_call_id="sensitive-call-not-for-html")
+        payload = '<script>alert("x")</script><img src=x onerror=alert(1)>{{TITLE}}'
+        call.update(tool_name=payload, reason=payload)
+        reports["pass"]["evidence_index"][0]["excerpt"] = "敏感证据原文不进HTML"
+        renderer.validate_case(reports["pass"], manifest)
+        for page in (renderer.render_case(manifest, reports["pass"]), renderer.render_summary(manifest, reports, synthesis, set())):
+            for forbidden in ("sensitive-message-not-for-html", "sensitive-call-not-for-html", "敏感证据原文不进HTML", '<script>alert("x")', "<img"):
+                self.assertNotIn(forbidden, page)
+            self.assertIn("&lt;script&gt;", page)
+            self.assertIn("{{TITLE}}", page)
+            parser = Links()
+            parser.feed(page)
+            self.assertEqual(len(parser.scripts), 1)
+        parser = Links()
+        parser.feed(renderer.render_case(manifest, reports["pass"]))
+        self.assertEqual(parser.links, ["../index.html"])
+        parser = Links()
+        parser.feed(renderer.render_summary(manifest, reports, synthesis, set()))
+        self.assertIn("cases/pass.html", parser.links)
+
+    def test_summary_omits_the_entire_coverage_table(self):
+        for version in (1, 2, 3):
+            manifest, reports, synthesis = renderer.demo_data(version=version)
+            page = renderer.render_summary(manifest, reports, synthesis, set())
+            for label in ("覆盖率（完整 / 全部样本）", "已可判定分析（非证据不足）", "JSON 报告", "原始 case 页面（不含占位）", "设计基线", "调用轨迹", "思考证据"):
+                self.assertNotIn("<td>" + label + "</td>", page)
+            self.assertNotIn("覆盖率（完整 / 全部样本）", page)
+            self.assertIn("覆盖与限制", renderer.render_case(manifest, reports["pass"]))
+
+    def test_tool_adherence_counts_all_checks_not_case_average(self):
+        manifest = {"cases": [{"case_key": "first", "required_check_ids": []}, {"case_key": "second", "required_check_ids": []}]}
+        reports = {"first": {"checks": [{"id": "same", "status": "fail"}]}, "second": {"checks": [{"id": "same" if i == 0 else "check-%d" % i, "status": "pass"} for i in range(9)]}}
+        result = renderer.tool_adherence_stats(manifest, reports)
+        self.assertEqual(result, {"total": 10, "pass": 9, "fail": 1, "unknown": 0, "incomplete_cases": 0, "checks_complete": True})
+        self.assertEqual(renderer.ratio(result["pass"], result["total"]), "90.0%")
+        # 相同检查ID在不同case各计一条，范围外报告不计入分母。
+        reports["outside"] = {"checks": [{"id": "outside", "status": "fail"}]}
+        self.assertEqual(renderer.tool_adherence_stats(manifest, reports), result)
+
+    def test_tool_adherence_unknown_and_empty_checks(self):
+        manifest = {"cases": [{"case_key": "first", "required_check_ids": []}]}
+        reports = {"first": {"checks": [{"id": "pass", "status": "pass"}, {"id": "unknown", "status": "unknown"}]}}
+        result = renderer.tool_adherence_stats(manifest, reports)
+        self.assertEqual((result["total"], result["pass"], result["unknown"]), (2, 1, 1))
+        self.assertEqual(renderer.ratio(result["pass"], result["total"]), "50.0%")
+        reports["first"]["checks"] = []
+        result = renderer.tool_adherence_stats(manifest, reports)
+        self.assertEqual(result["total"], 0)
+        self.assertEqual(renderer.ratio(result["pass"], result["total"]), "N/A")
+        manifest["cases"] = []
+        self.assertEqual(renderer.tool_adherence_stats(manifest, {})["total"], 0)
+
+    def test_tool_adherence_missing_reports_and_required_checks_are_partial(self):
+        manifest = {"cases": [{"case_key": "first", "required_check_ids": ["required"]}, {"case_key": "second", "required_check_ids": []}]}
+        reports = {"first": {"checks": [{"id": "other", "status": "pass"}]}}
+        result = renderer.tool_adherence_stats(manifest, reports)
+        self.assertEqual(result, {"total": 1, "pass": 1, "fail": 0, "unknown": 0, "incomplete_cases": 2, "checks_complete": False})
+        # 没拿到的检查总量不按case数补造。
+        manifest, reports, synthesis = self.call_fixture([["pass"], ["pass"]])
+        page = renderer.render_summary(manifest, {"pass": reports["pass"]}, synthesis, set())
+        self.assertIn("已知检查通过占比（非完整工具遵循率）", page)
+        self.assertIn("缺报告或必要检查", page)
+        self.assertNotIn("<td>工具遵循率</td>", page)
+
+    def test_tool_adherence_uses_checks_independently_of_calls_and_verdict(self):
+        manifest, reports, synthesis = self.call_fixture([["fail"], ["pass"] * 9])
+        reports["pass"]["checks"][0]["status"] = "fail"
+        reports["fail"]["checks"][1]["status"] = "unknown"
+        result = renderer.tool_adherence_stats(manifest, reports)
+        expected_total = sum(len(report["checks"]) for report in reports.values())
+        self.assertEqual((result["total"], result["pass"], result["fail"], result["unknown"]), (expected_total, expected_total - 2, 1, 1))
+        page = renderer.render_summary(manifest, reports, synthesis, set())
+        self.assertIn("工具遵循率</td><td>" + str(expected_total - 2) + " / " + str(expected_total), page)
+        self.assertIn("工具正确使用率=9/10 · 90.0%", page)
+        self.assertIn("所有选定案例的 checks 中状态为 pass 的条数 / 所有选定案例的 checks 总条数", page)
+        self.assertNotIn("工具使用案例检查</td><td>", page)
+        self.assertIn("工具使用案例检查", renderer.render_case(manifest, reports["pass"]))
+
     def test_cli_demo_deterministic_private_synthetic(self):
         dest = self.root / "demo"
         command = [sys.executable, "-I", "-B", str(SCRIPT), "demo", "--out", str(dest)]
         result = subprocess.run(command, capture_output=True, text=True, check=False)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(json.loads(result.stdout)["counts"]["pass"], 1)
+        output = json.loads(result.stdout)
+        self.assertEqual(output["counts"]["pass"], 1)
+        self.assertEqual(output["tool_usage"], {"total": 5, "pass": 3, "fail": 1, "unknown": 1, "incomplete_cases": 1, "inventory_complete": False})
+        self.assertEqual(renderer.load_json(dest / "manifest.json")["schema_version"], 3)
+        demo_manifest = renderer.load_json(dest / "manifest.json")
+        demo_reports = {case["case_key"]: renderer.load_json(dest / "reports" / (case["case_key"] + ".json")) for case in demo_manifest["cases"]}
+        self.assertEqual(output["tool_adherence"], renderer.tool_adherence_stats(demo_manifest, demo_reports))
         self.assertIn("合成", (dest / "index.html").read_text())
+        for file in dest.rglob("*.html"):
+            parser = Links()
+            parser.feed(file.read_text())
+            for link in parser.links:
+                self.assertTrue((file.parent / link).is_file(), (file, link))
         duplicate = subprocess.run(command, capture_output=True, text=True, check=False)
         self.assertEqual(duplicate.returncode, 2)
         other = self.root / "demo-two"

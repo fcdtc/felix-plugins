@@ -43,7 +43,7 @@ python3 -I -B "$FROZEN_SKILL_ROOT/scripts/prepare_audit.py" packet \
 
 必要debug补回后重复 `--debug <本例debug文件>`，输出到新的 `packet-002`，不覆盖原始证据或上一份派生资料。`index.json` 列出全部权威消息、字段缺口、必要前文分页状态及 `needs_debug_message_ids`；错会话/消息不强行合并，缺证保留。无message_id时先从官方history补身份，不由run推测。
 
-worker首先读索引、完整本例输入及全部实际工具请求/回包。调用和终态按事件去重，usage只取可确认的单份快照、不叠加累计值。思考按条索引及文件按需读取；首个模型Prompt留可引用文件，其余累计message_list只列原始定位、结构和哈希，确需核验该轮时再读取源片段。自然语言和图片引用保持原样，不靠递归JSON解析或摘要裁剪改变语义。
+worker首先读索引、完整本例输入及全部实际工具请求/回包。调用和终态按事件去重，usage只取可确认的单份快照、不叠加累计值。为v3逐调用审计，按[调用清单契约](tool-call-scoring.md)逐条核对全部消息和tool-calls.json索引，复合ID为(message_id,tool_call_id)，start/end算一次，实际retry另计。已知调用不能遗漏；必要前文/轮次或索引缺失保留inventory_complete=false，未知总量不伪造。思考按条索引及文件按需读取；首个模型Prompt留可引用文件，其余累计message_list只列原始定位、结构和哈希，确需核验该轮时再读取源片段。自然语言和图片引用保持原样，不靠递归JSON解析或摘要裁剪改变语义。
 
 **完成条件：** 本例完整输入、全部真实轮次调用与终态可定位；明确哪些字段已充分、哪些需补查。thinking缺失本身不要求重复debug；必要字段未知不能因精简资料包改成pass。主线程只需覆盖索引，不批量展开所有case的history/debug；完整原规则按适用分支可读取。
 
@@ -58,7 +58,7 @@ worker首先读索引、完整本例输入及全部实际工具请求/回包。�
 | 原始输出 | cycle.output、debug/history终态 | 保留原始，不用人工修改后的文本覆盖 |
 | 修改后输出 | 导出明确列及已核实JSON字段 | exp_output/partial_exp_output的语义须用有值样本核验；不能凭字段名认领 |
 | 人工评分/评论 | 导出明确列、已核实metric_scores内容 | 指标定义不等于实际评分；空值不等于通过 |
-| 调用 | cycle.agent_tool_calls、debug.tool_calls_json、原始tool事件 | 按tool_call_id关联；有的简表缺error，补原始事件 |
+| 调用 | cycle.agent_tool_calls、debug.tool_calls_json、原始tool事件 | 按(message_id,tool_call_id)关联；有的简表缺error，补原始事件 |
 | 可见思考 | debug.raw_events_json中的thinking_payload等实际字段 | runtime_segments可能只含text/tool。无思考事件记missing，不用最终输出或自己推测补齐 |
 | 时间、token、终态 | debug.runtime_usage_json、原始observation/terminal事件、导出统计 | 避免重复累加多份累计快照。字段缺失null，正常结束不代表业务完成 |
 | SP/PE及每轮模型输入 | debug.sp/pe、runtime_steps_json里的prompt_built、原始debug_payload | 快照优先，记录可见性；敏感信息留私有证据 |

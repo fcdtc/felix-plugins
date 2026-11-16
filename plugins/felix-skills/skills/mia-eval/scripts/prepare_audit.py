@@ -142,7 +142,7 @@ def resource_files(root):
 
 def report_contract(renderer, source):
     """字段来自已验证的所有 demo，枚举直接来自冻结校验器的 AST。"""
-    manifest, reports, synthesis = renderer.demo_data(version=2)
+    manifest, reports, synthesis = renderer.demo_data(version=3)
     renderer.validate_manifest(manifest)
     renderer.validate_synthesis(synthesis, manifest)
     for report in reports.values():
@@ -197,6 +197,15 @@ def report_contract(renderer, source):
         "numeric_nullable_fields": ["case.timeline[].duration_ms"] + ["case.metrics." + key for key in renderer.METRICS],
         "rules": [
             "对象字段必需且仅允许 object_fields 所列字段；数组可为空，ID 和关联字段用字符串。",
+            "tool_usage_review 必需且仅含 inventory_complete:boolean 与 calls:array；calls 每项仅含 message_id/tool_call_id/tool_name/status/reason 字符串与 evidence_refs 字符串数组。",
+            "calls 状态仅 pass/fail/unknown；pass/fail 必须引用本报告 evidence_index，unknown 说明缺口且保留在已知调用分母。",
+            "调用键 (message_id,tool_call_id) 在本 case 唯一，start/end 合并一次，初次错误和修正重试分别记一次，修正不覆盖原 fail。",
+            "逐条核对 packet 的 index.json 与 tool-calls.json 全部调用索引，核对完整轮次，calls 无缺项；主线程再按复合 ID 核对集合，不只核对数量。",
+            "inventory_complete 仅在全部轮次及调用索引核对无缺项时为 true；清单不完整时仅列已知调用下限，不伪造未知总量。",
+            "metrics.tool_calls 为 null 或非负整数；inventory_complete=true 时非 null 值必须等于 calls 长度，不完整时不得小于已知 calls 长度。",
+            "工具正确使用率=全部选定 case 的 calls pass 数/全部 calls 数，按总调用加权，不取案例平均；清单不完整只显示已知占比，零调用 N/A。",
+            "逐调用 fail 不自动改变整体分类，原 checks/findings/struggles 仍按审计标准决定；tool_usage 同名 check 为工具使用案例检查，不是调用率。",
+            "业务调用判定读取 skill/references/tool-call-scoring.md；HTML 仅展示调用顺序、工具名、判定、原因，不展示调用敏感 ID 或证据原文。",
             "schema_version 与 manifest 一致；case_key 必须属于 manifest。身份未知用空字符串，不能认领目标身份。",
             "checks/evidence_index/findings 的 id 与 timeline 的正整数 step 各自唯一。",
             "evidence_refs 引用本报告 evidence_index；非 unknown 检查、confirmed 发现和 struggle 必须有引用。",
@@ -261,7 +270,7 @@ def freeze_command(args):
     for name, value in derived:
         body = json_bytes(value)
         write_bytes(runtime / name, body)
-        derivation = "axis_examples()" if name == "axis-examples.json" else "demo_data(version=2) / validator"
+        derivation = "axis_examples()" if name == "axis-examples.json" else "demo_data(version=3) / validator"
         entries.append({"source_path": str(renderer_path), "derived_from": derivation,
                         "path": name, "sha256": sha256(body), "size_bytes": len(body)})
     # 包括可信脚本执行期间的改动也不能悄悄改变本轮来源。
