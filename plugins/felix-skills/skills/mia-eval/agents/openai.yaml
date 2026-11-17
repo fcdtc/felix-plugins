@@ -1,5 +1,5 @@
 interface:
   display_name: "MIA 评测链路审计"
-  short_description: "审计固定版本的流程、工具调用与结束时机；检查条数算工具遵循率，调用次数算工具正确使用率，生成中文 HTML"
+  short_description: "审计固定版本的流程、工具调用与收尾；检查条数算设计遵循率，调用次数算工具遵循率，生成中文离线报告"
 policy:
   allow_implicit_invocation: false

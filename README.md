@@ -160,9 +160,9 @@ python3 -I -B -m unittest discover -s plugins/felix-skills/tests -p 'test_mia_de
 
 每个 case 由独立子代理对照设计基线、可见思考和实际请求回包，分别分析设计遵循、任务完成及执行挣扎。默认并发 3 个，用户指定时按指定并发数执行，明确消耗模型 tokens；只读已有运行，不重新评测或修改平台。环境与身份 Header 遵循目标项目规则，不写死某个 Agent 的 PPE。
 
-固定模板输出 `site/index.html` 和 `site/cases/<case_key>.html`，支持从汇总逐项打开详情。汇总的“问题汇总”按严重程度列出出错环节、问题及每个具体 case 的经过，不写修改建议或验证办法；用直白中文说明发生了什么，专业术语仅用待评测 Agent 设计中已有的词，不另造概念。统计由 Python 渲染器重算：顺畅通过率以全部选定 case 为分母，恢复/挣扎、不通过与证据不足分别列示；缺失 case 不被排除。默认私有本地交付，不上传真实学习内容、凭据或整段思考。
+固定模板输出 `site/index.html` 和 `site/cases/<case_key>.html`。汇总含独立 MIA 链接、折叠元信息、分类数量及分项指标；工具遵循率可展开逐工具表，全 case 调用清单完整性表及详情链接保留。问题按严重程度列环节、具体行为和每例经过，不写修改建议或验证办法。设计遵循率按全部 checks、工具遵循率按实际 calls 加权，案例轴另行命名；缺报告保留分母，零分母 N/A，清单不全只声称已知占比。指标与历史兼容以[统计口径](plugins/felix-skills/skills/mia-eval/references/check-statistics.md)为准。默认私有离线交付，不上传真实学习内容、凭据或整段思考。
 
-每轮先将审计规则、脚本、模板及本次已选补充口径冻结到私有 `runtime/`；worker 和汇总使用同一快照，不混入执行期间的技能更新。单例 history 字段完整时直接复用，只补缺字段的 debug；worker 使用精简报告契约与分轴合成对照。调度按实际 `case_key` 回传绑定代理，初审和返修共用已核实的槽位，不根据并发返回位置猜对应关系。上述辅助脚本仅本地解析及记账，不启动模型、不访问平台或修改宿主配置。
+每轮先解析物理路径，将原 CLI 输出放 acquisition 后冻结规则、脚本、模板和补充口径到 `runtime/`。worker 复用完整 history，只补缺项 debug；packet 登记输入根类型、SHA 与规范引用定位，脚本校验可解析引用。调度先核对实际回传 `case_key+ordinal`，初审和返修共用槽位，报告交付不释放容量，实际宿主 completed 才释放。辅助脚本不启动模型、不访问平台或修改宿主配置。已有报告的[纯重渲染与范围修订](plugins/felix-skills/skills/mia-eval/references/revisions.md)分开执行，原证据和判定版本保留，不冒充新模型运行。
 
 入口：[mia-eval](plugins/felix-skills/skills/mia-eval/SKILL.md)；字段覆盖与 URL 限制见[取证规则](plugins/felix-skills/skills/mia-eval/references/acquisition.md)，冻结及调度接口见[目录与分工](plugins/felix-skills/skills/mia-eval/references/dispatch.md)。固定 JSON 与页面约定以本轮冻结[渲染器](plugins/felix-skills/skills/mia-eval/scripts/render_report.py)的校验及 `demo` 生成的合成 JSON 为准。
 

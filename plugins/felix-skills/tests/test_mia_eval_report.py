@@ -65,7 +65,10 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(result["total"], 4)
         self.assertEqual(result["counts"], {"pass": 1, "fail": 1, "recovered": 1, "insufficient": 1})
         summary = (self.root / "output/index.html").read_text()
-        self.assertIn("顺畅通过率=1/4 · 25.0%", summary)
+        self.assertNotIn("顺畅通过率=", summary)
+        self.assertEqual(result["smooth_rate"], "25.0%")
+        self.assertEqual(result["statistics_schema_version"], 2)
+        self.assertEqual(summary.count('<th scope="col">已列调用数</th>'), 1)
         self.assertIn("涉及 1 个 case", summary)
         for file in (self.root / "output").rglob("*.html"):
             links = Links()
@@ -104,17 +107,18 @@ class ReportTests(unittest.TestCase):
         page = renderer.render_summary(self.manifest, self.reports, self.synthesis, set())
         self.assertIn("未发现本次范围内的问题", page)
 
-    def test_summary_case_reasons_explain_the_actual_problem(self):
+    def test_summary_removes_case_verdict_table_but_keeps_details_and_issue_examples(self):
         for version in (1, 2, 3):
             with self.subTest(version=version):
                 manifest, reports, synthesis = renderer.demo_data(version=version)
                 reports["fail"]["checks"][0]["observed"] = "只返回了项目 A，项目 B 的建议没有给出。"
-                reports["fail"]["findings"][0]["claim"] = "第二项建议没有给出，任务没有做完。"
                 page = renderer.render_summary(manifest, reports, synthesis, set())
-                for value in (reports["fail"]["checks"][0]["observed"], reports["fail"]["findings"][0]["claim"], reports["recovered"]["struggles"][0]["description"], "实际调用记录不完整"):
-                    self.assertIn(value, page)
-                for value in ("已确认实质偏差", "三轴判定存在 unknown", "trace 覆盖不完整", "必需检查缺失或 unknown"):
+                for value in ('id="case-table"', 'id="case-search"', 'id="case-status"', "判定依据 / 缺口", "全部 case</h2>", "visible-count", "noscript"):
                     self.assertNotIn(value, page)
+                for case in manifest["cases"]:
+                    self.assertIn('href="cases/' + case["case_key"] + '.html"', page)
+                self.assertIn(synthesis["issues"][0]["examples"][0]["description"], page)
+                self.assertIn(reports["fail"]["checks"][0]["observed"], renderer.render_case(manifest, reports["fail"]))
 
     def test_summary_metadata_keeps_evaluation_mia_link(self):
         task_url = "https://mia.example.invalid/evaluation/task/task-123?space_id=space-456&view=details"
@@ -124,17 +128,19 @@ class ReportTests(unittest.TestCase):
                 manifest["task_url"] = task_url
                 renderer.validate_manifest(manifest)
                 page = renderer.render_summary(manifest, reports, synthesis, set())
-                metadata = page.split('<section aria-labelledby="meta-heading">', 1)[1].split("</section>", 1)[0]
-                self.assertIn('<h2 id="meta-heading">元信息</h2>', metadata)
-                self.assertIn("评测 MIA 链接", metadata)
-                self.assertIn('href="' + task_url.replace("&", "&amp;") + '"', metadata)
+                metadata = page.split('<details id="metadata-details" class="metadata-details">', 1)[1].split("</details>", 1)[0]
+                self.assertIn('<summary id="meta-heading">', metadata)
+                self.assertNotIn(task_url.replace("&", "&amp;"), metadata)
+                self.assertNotIn("评测 MIA 链接", metadata)
+                self.assertNotIn('<details id="metadata-details" class="metadata-details" open', page)
+                self.assertIn('<p class="evaluation-link">评测 MIA 链接：<a href="' + task_url.replace("&", "&amp;") + '"', page)
                 parser = Links()
-                parser.feed(metadata)
-                self.assertEqual(parser.links, [task_url])
+                parser.feed(page)
+                self.assertEqual(parser.links.count(task_url), 1)
 
     def test_summary_missing_evaluation_link_stays_unprovided(self):
         page = renderer.render_summary(self.manifest, self.reports, self.synthesis, set())
-        self.assertIn("<td>评测 MIA 链接</td><td>未提供</td>", page)
+        self.assertIn('<p class="evaluation-link">评测 MIA 链接：未提供</p>', page)
 
     def test_summary_omits_methodology_notes_and_conclusion(self):
         for version in (1, 2, 3):
@@ -146,10 +152,12 @@ class ReportTests(unittest.TestCase):
                 for value in ("元信息与统计口径", "顺畅通过率=P/N", "证据使用脱敏定位与短引用", "conclusion-heading", "{{CONCLUSION}}", synthesis["summary"]):
                     self.assertNotIn(value, page)
                 self.assertIn('<h2 id="rate-heading" class="rate">综合表现</h2>', page)
-                self.assertIn("<p>顺畅通过率=1/4 · 25.0%</p>", page)
-                headings = ("meta-heading", "rate-heading", "issues-heading", "cases-heading")
-                positions = [page.index('<section aria-labelledby="' + heading + '">') for heading in headings]
+                self.assertNotIn("顺畅通过率=", page)
+                positions = [page.index('class="evaluation-link"'), page.index('id="metadata-details"'),
+                             page.index('aria-labelledby="rate-heading"'), page.index('aria-labelledby="issues-heading"')]
                 self.assertEqual(positions, sorted(positions))
+                for removed in ("cases-heading", "工具调用正确性", "各项按自身判定", "计算方式：正确实际调用数", 'scope="col">调用统计', "设计遵循率计算方式"):
+                    self.assertNotIn(removed, page)
 
     def test_summary_omits_limitations_section_but_case_keeps_it(self):
         for version in (1, 2, 3):
@@ -162,7 +170,7 @@ class ReportTests(unittest.TestCase):
                 self.assertNotIn("gaps-heading", summary)
                 self.assertNotIn("仅详情展示的限制说明", summary)
                 self.assertIn("证据不足", summary)
-                self.assertIn("判定依据 / 缺口", summary)
+                self.assertNotIn("判定依据 / 缺口", summary)
                 detail = renderer.render_case(manifest, report)
                 self.assertIn("覆盖与限制", detail)
                 self.assertIn("仅详情展示的限制说明", detail)
@@ -361,7 +369,8 @@ class ReportTests(unittest.TestCase):
         result = self.summary()
         self.assertEqual(result["total"], 0)
         page = (self.root / "output/index.html").read_text()
-        self.assertIn("顺畅通过率=0/0 · N/A", page)
+        self.assertEqual(result["smooth_rate"], "N/A")
+        self.assertIn("设计遵循率</td><td>0 / 0</td><td>N/A", page)
         self.assertNotIn("0.0%", page)
 
     def test_overwrite_default_refused_and_explicit_allowed(self):
@@ -447,7 +456,7 @@ class ReportTests(unittest.TestCase):
     def test_partial_scope_and_axis_unknown_visible(self):
         self.manifest["scope_complete"] = False
         page = renderer.render_summary(self.manifest, self.reports, self.synthesis, set())
-        for text in ("部分清单，仅对已取得样本统计", "设计遵循率", "任务完成率", "unknown", "工具遵循率"):
+        for text in ("部分清单，仅对已取得样本统计", "设计遵循率", "任务完成率", "unknown", "工具遵循率（历史格式无逐调用数据）"):
             self.assertIn(text, page)
 
     def test_agent_flow_mock_context_and_legal_block_are_not_failures(self):
@@ -495,10 +504,14 @@ class ReportTests(unittest.TestCase):
         manifest, reports, synthesis = renderer.demo_data()
         # fail案例执行不通过，设计与结束时机已有完整通过证据。
         page = renderer.render_summary(manifest, reports, synthesis, set())
-        self.assertIn("设计遵循率</td><td>3 / 4", page)
+        self.assertIn("设计遵循通过案例占比</td><td>3 / 4", page)
         self.assertIn("流程完成率</td><td>2 / 4", page)
         self.assertIn("结束时机正确率</td><td>3 / 4", page)
-        self.assertIn("工具正确使用率", page)
+        self.assertIn("工具遵循率", page)
+        statistics = renderer.audit_statistics(manifest, reports)
+        self.assertEqual(statistics["case_axes"]["design"]["pass"], 3)
+        self.assertEqual(statistics["case_axes"]["execution"]["pass"], 2)
+        self.assertNotEqual(statistics["design_adherence"]["total"], statistics["total"])
 
     def test_axis_examples_distinguish_admission_closure_and_prefetch(self):
         examples = {e["id"]: e for e in renderer.axis_examples()}
@@ -511,6 +524,29 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(unfinished["verdict"]["execution"], "fail")
         self.assertEqual(unfinished["check_statuses"]["completion_gate"], "fail")
         self.assertEqual(examples["rule-prefetch"]["classification"], "pass")
+
+    def test_rule_examples_anchor_actions_scope_and_required_query_closure(self):
+        for version in (1, 2, 3):
+            with self.subTest(version=version):
+                examples = {item["id"]: item for item in renderer.axis_examples(version)}
+                care = examples["normal-task-care"]
+                self.assertEqual(care["classification"], "pass")
+                self.assertIn("Message 标签不证明", care["description"])
+                extra = examples["independent-proactive-item"]
+                self.assertEqual(extra["classification"], "fail")
+                self.assertEqual(extra["verdict"]["execution"], "pass")
+                query = examples["unfinished-required-query"]
+                self.assertEqual(query["classification"], "fail")
+                self.assertEqual(query["verdict"]["execution"], "fail")
+                for key in ("design", "execution") + (("tool_usage", "completion_gate") if version > 1 else ()):
+                    self.assertEqual(query["check_statuses"][key], "fail")
+                self.assertEqual(examples["excluded-domain-detail"]["classification"], "pass")
+                self.assertIn("本合成审计", examples["excluded-domain-detail"]["audit_exclusions"][0])
+                if version == 3:
+                    self.assertEqual([call["status"] for call in query["tool_usage_review"]["calls"]], ["fail", "pass", "pass"])
+                    self.assertEqual(len(query["tool_usage_review"]["calls"]), 3)
+                    self.assertEqual(extra["tool_usage_review"]["calls"][1]["status"], "fail")
+                    self.assertEqual(care["tool_usage_review"]["calls"][0]["tool_name"], "push")
 
     def test_agent_flow_struggles_not_raw_counters_determine_recovery(self):
         manifest, reports, _ = renderer.demo_data()
@@ -550,16 +586,15 @@ class ReportTests(unittest.TestCase):
         usage = renderer.tool_usage_stats(manifest, reports)
         self.assertEqual(usage, {"total": 10, "pass": 9, "fail": 1, "unknown": 0, "incomplete_cases": 0, "inventory_complete": True})
         page = renderer.render_summary(manifest, reports, synthesis, set())
-        self.assertIn("工具正确使用率=9/10 · 90.0%", page)
+        self.assertIn('工具遵循率<span id="tool-drilldown-label">展开 ▾</span></button></td><td>9 / 10</td><td>90.0%', page)
         self.assertNotIn("50.0%", page)
-        self.assertIn("按调用总数加权，不取案例平均", page)
+        self.assertNotIn("按调用总数加权，不取案例平均", page)
         checks_total = sum(len(report["checks"]) for report in reports.values())
-        self.assertIn("工具遵循率</td><td>" + str(checks_total) + " / " + str(checks_total), page)
-        for axis in ("设计遵循率", "流程完成率", "结束时机正确率"):
+        self.assertIn("设计遵循率</td><td>" + str(checks_total) + " / " + str(checks_total), page)
+        for axis in ("设计遵循通过案例占比", "流程完成率", "结束时机正确率"):
             self.assertIn(axis + "</td><td>2 / 2", page)
-        self.assertIn("总调用数</td><td>10", page)
-        for label, count in (("正确", 9), ("错误", 1), ("无法判断", 0)):
-            self.assertIn(label + "</td><td>" + str(count), page)
+        self.assertNotIn("总调用数</td><td>10", page)
+        self.assertIn('<td>synthetic-tool</td><td>10</td><td>9</td><td>1</td><td>0</td><td>90.0%</td>', page)
 
     def test_tool_usage_retry_fail_and_pass_keep_original_and_recovery(self):
         manifest, reports, _ = renderer.demo_data(version=3)
@@ -569,8 +604,8 @@ class ReportTests(unittest.TestCase):
         one = copy.deepcopy(manifest)
         one["cases"] = [next(c for c in manifest["cases"] if c["case_key"] == "recovered")]
         page = renderer.render_summary(one, {"recovered": report}, {"summary": "合成", "issues": []}, set())
-        self.assertIn("工具正确使用率=1/2 · 50.0%", page)
-        self.assertIn("工具遵循率</td><td>" + str(len(report["checks"])) + " / " + str(len(report["checks"])), page)
+        self.assertIn('工具遵循率<span id="tool-drilldown-label">展开 ▾</span></button></td><td>1 / 2</td><td>50.0%', page)
+        self.assertIn("设计遵循率</td><td>" + str(len(report["checks"])) + " / " + str(len(report["checks"])), page)
         report["tool_usage_review"]["calls"][0]["reason"] = "初次参数错误；修正成功不抹去首次失败。"
         renderer.validate_case(report, manifest)
         self.assertEqual(report["tool_usage_review"]["calls"][0]["status"], "fail")
@@ -595,8 +630,8 @@ class ReportTests(unittest.TestCase):
         usage = renderer.tool_usage_stats(manifest, reports)
         self.assertEqual((usage["total"], usage["pass"], usage["unknown"]), (2, 1, 1))
         page = renderer.render_summary(manifest, reports, synthesis, set())
-        self.assertIn("工具正确使用率=1/2 · 50.0%", page)
-        self.assertIn("无法判断</td><td>1", page)
+        self.assertIn('工具遵循率<span id="tool-drilldown-label">展开 ▾</span></button></td><td>1 / 2</td><td>50.0%', page)
+        self.assertIn('<td>synthetic-tool</td><td>2</td><td>1</td><td>0</td><td>1</td><td>50.0%</td>', page)
         detail = renderer.render_case(manifest, reports["pass"])
         self.assertIn("无法判断", detail)
         self.assertIn("缺少合成回包记录", detail)
@@ -605,11 +640,11 @@ class ReportTests(unittest.TestCase):
         manifest, reports, synthesis = self.call_fixture([[]])
         report = reports["pass"]
         page = renderer.render_summary(manifest, reports, synthesis, set())
-        self.assertIn("工具正确使用率=0/0 · N/A", page)
-        self.assertIn("工具正确使用率=0/0 · N/A", renderer.render_case(manifest, report))
+        self.assertIn('工具遵循率<span id="tool-drilldown-label">展开 ▾</span></button></td><td>0 / 0</td><td>N/A', page)
+        self.assertIn("工具遵循率=0/0 · N/A", renderer.render_case(manifest, report))
         manifest["cases"] = []
         page = renderer.render_summary(manifest, {}, synthesis, set())
-        self.assertIn("工具正确使用率=0/0 · N/A", page)
+        self.assertIn('工具遵循率<span id="tool-drilldown-label">展开 ▾</span></button></td><td>0 / 0</td><td>N/A', page)
         self.assertNotIn("100.0%", page)
 
     def test_tool_usage_partial_inventory_warns_and_never_fills_unknown_total(self):
@@ -620,11 +655,12 @@ class ReportTests(unittest.TestCase):
         renderer.validate_case(report, manifest)
         page = renderer.render_summary(manifest, reports, synthesis, set())
         self.assertIn("1 个 case 的调用清单不完整", page)
-        self.assertIn("已知调用正确占比（非全量调用率）=2/3 · 66.7%", page)
-        self.assertIn("已知调用数（总量下限）</td><td>3", page)
-        self.assertIn("无法声称全部选定案例的全量工具正确使用率", page)
-        self.assertIn("未知总量不补写", page)
-        self.assertNotIn("工具正确使用率=", page)
+        self.assertIn('已知调用正确占比（非全量工具遵循率）<span id="tool-drilldown-label">展开 ▾</span></button></td><td>2 / 3</td><td>66.7%', page)
+        self.assertIn('<th scope="col">已知调用数（总量下限）</th>', page)
+        metadata = page.split('<div class="metadata-body">', 1)[1].split('</details>', 1)[0]
+        self.assertIn("只能声称已知调用正确占比", metadata)
+        self.assertIn("未知总量不补写", metadata)
+        self.assertNotIn("工具遵循率=", page)
         self.assertNotIn("2/21", page)
         self.assertIn("调用清单不完整", renderer.render_case(manifest, report))
         usage = renderer.tool_usage_stats(manifest, {"fail": reports["fail"]})
@@ -632,7 +668,7 @@ class ReportTests(unittest.TestCase):
         report["tool_usage_review"]["calls"] = []
         report["metrics"]["tool_calls"] = None
         renderer.validate_case(report, manifest)
-        self.assertIn("已知调用正确占比（非全量调用率）=0/0 · N/A", renderer.render_case(manifest, report))
+        self.assertIn("已知调用正确占比（非全量工具遵循率）=0/0 · N/A", renderer.render_case(manifest, report))
         self.assertNotIn("本 case 没有实际工具调用", renderer.render_case(manifest, report))
 
     def test_tool_usage_strict_fields_ids_refs_status_and_inventory(self):
@@ -688,13 +724,21 @@ class ReportTests(unittest.TestCase):
                 self.assertEqual(report["schema_version"], version)
             page = renderer.render_summary(manifest, reports, synthesis, set())
             self.assertEqual(renderer.agent_flow(manifest), version in (2, 3))
-            if version == 2:
-                self.assertIn("工具遵循率", page)
-                self.assertNotIn("工具使用无误案例占比（历史口径）", page)
-                self.assertNotIn("工具正确使用率", page)
-                self.assertNotIn("逐调用工具使用检查", renderer.render_case(manifest, reports["pass"]))
+            statistics = renderer.audit_statistics(manifest, reports)
+            self.assertEqual(statistics["statistics_schema_version"], 2)
+            self.assertNotIn("tool_usage", statistics)
+            self.assertNotIn("工具正确使用率", page)
             if version < 3:
+                self.assertIn("工具遵循率（历史格式无逐调用数据）", page)
+                self.assertIn("设计遵循率", page)
+                self.assertNotIn('id="tool-drilldown-toggle"', page)
+                self.assertNotIn("逐调用工具使用检查", renderer.render_case(manifest, reports["pass"]))
                 self.assertNotIn("tool_usage_review", reports["pass"])
+                self.assertIsNone(statistics["tool_adherence"])
+                self.assertEqual(statistics["tool_adherence_by_tool"], [])
+                self.assertEqual(statistics["design_adherence"]["total"], sum(len(report["checks"]) for report in reports.values()))
+                with self.assertRaises(renderer.ContractError):
+                    renderer.tool_adherence_stats(manifest, reports)
                 with self.assertRaises(renderer.ContractError):
                     renderer.tool_usage_stats(manifest, reports)
         new_manifest, new_reports, _ = renderer.demo_data(version=3)
@@ -740,54 +784,161 @@ class ReportTests(unittest.TestCase):
             self.assertNotIn("覆盖率（完整 / 全部样本）", page)
             self.assertIn("覆盖与限制", renderer.render_case(manifest, reports["pass"]))
 
-    def test_tool_adherence_counts_all_checks_not_case_average(self):
+    def test_design_adherence_counts_all_checks_not_case_average(self):
         manifest = {"cases": [{"case_key": "first", "required_check_ids": []}, {"case_key": "second", "required_check_ids": []}]}
         reports = {"first": {"checks": [{"id": "same", "status": "fail"}]}, "second": {"checks": [{"id": "same" if i == 0 else "check-%d" % i, "status": "pass"} for i in range(9)]}}
-        result = renderer.tool_adherence_stats(manifest, reports)
+        result = renderer.design_adherence_stats(manifest, reports)
         self.assertEqual(result, {"total": 10, "pass": 9, "fail": 1, "unknown": 0, "incomplete_cases": 0, "checks_complete": True})
         self.assertEqual(renderer.ratio(result["pass"], result["total"]), "90.0%")
         # 相同检查ID在不同case各计一条，范围外报告不计入分母。
         reports["outside"] = {"checks": [{"id": "outside", "status": "fail"}]}
-        self.assertEqual(renderer.tool_adherence_stats(manifest, reports), result)
+        self.assertEqual(renderer.design_adherence_stats(manifest, reports), result)
 
-    def test_tool_adherence_unknown_and_empty_checks(self):
+    def test_design_adherence_unknown_and_empty_checks(self):
         manifest = {"cases": [{"case_key": "first", "required_check_ids": []}]}
         reports = {"first": {"checks": [{"id": "pass", "status": "pass"}, {"id": "unknown", "status": "unknown"}]}}
-        result = renderer.tool_adherence_stats(manifest, reports)
+        result = renderer.design_adherence_stats(manifest, reports)
         self.assertEqual((result["total"], result["pass"], result["unknown"]), (2, 1, 1))
         self.assertEqual(renderer.ratio(result["pass"], result["total"]), "50.0%")
         reports["first"]["checks"] = []
-        result = renderer.tool_adherence_stats(manifest, reports)
+        result = renderer.design_adherence_stats(manifest, reports)
         self.assertEqual(result["total"], 0)
         self.assertEqual(renderer.ratio(result["pass"], result["total"]), "N/A")
         manifest["cases"] = []
-        self.assertEqual(renderer.tool_adherence_stats(manifest, {})["total"], 0)
+        self.assertEqual(renderer.design_adherence_stats(manifest, {})["total"], 0)
 
-    def test_tool_adherence_missing_reports_and_required_checks_are_partial(self):
+    def test_design_adherence_missing_reports_and_required_checks_are_partial(self):
         manifest = {"cases": [{"case_key": "first", "required_check_ids": ["required"]}, {"case_key": "second", "required_check_ids": []}]}
         reports = {"first": {"checks": [{"id": "other", "status": "pass"}]}}
-        result = renderer.tool_adherence_stats(manifest, reports)
+        result = renderer.design_adherence_stats(manifest, reports)
         self.assertEqual(result, {"total": 1, "pass": 1, "fail": 0, "unknown": 0, "incomplete_cases": 2, "checks_complete": False})
         # 没拿到的检查总量不按case数补造。
         manifest, reports, synthesis = self.call_fixture([["pass"], ["pass"]])
         page = renderer.render_summary(manifest, {"pass": reports["pass"]}, synthesis, set())
-        self.assertIn("已知检查通过占比（非完整工具遵循率）", page)
+        self.assertIn("已知检查通过占比（非完整设计遵循率）", page)
         self.assertIn("缺报告或必要检查", page)
-        self.assertNotIn("<td>工具遵循率</td>", page)
+        self.assertNotIn("<td>设计遵循率</td>", page)
 
-    def test_tool_adherence_uses_checks_independently_of_calls_and_verdict(self):
+    def test_design_adherence_uses_checks_independently_of_calls_and_verdict(self):
         manifest, reports, synthesis = self.call_fixture([["fail"], ["pass"] * 9])
         reports["pass"]["checks"][0]["status"] = "fail"
         reports["fail"]["checks"][1]["status"] = "unknown"
-        result = renderer.tool_adherence_stats(manifest, reports)
+        result = renderer.design_adherence_stats(manifest, reports)
         expected_total = sum(len(report["checks"]) for report in reports.values())
         self.assertEqual((result["total"], result["pass"], result["fail"], result["unknown"]), (expected_total, expected_total - 2, 1, 1))
         page = renderer.render_summary(manifest, reports, synthesis, set())
-        self.assertIn("工具遵循率</td><td>" + str(expected_total - 2) + " / " + str(expected_total), page)
-        self.assertIn("工具正确使用率=9/10 · 90.0%", page)
-        self.assertIn("所有选定案例的 checks 中状态为 pass 的条数 / 所有选定案例的 checks 总条数", page)
+        self.assertIn("设计遵循率</td><td>" + str(expected_total - 2) + " / " + str(expected_total), page)
+        self.assertIn('工具遵循率<span id="tool-drilldown-label">展开 ▾</span></button></td><td>9 / 10</td><td>90.0%', page)
+        self.assertNotIn("所有选定案例的 checks 中状态为 pass 的条数 / 所有选定案例的 checks 总条数", page)
         self.assertNotIn("工具使用案例检查</td><td>", page)
         self.assertIn("工具使用案例检查", renderer.render_case(manifest, reports["pass"]))
+
+    def test_summary_native_metric_order_and_collapsed_controls(self):
+        manifest, reports, synthesis = renderer.demo_data(version=3)
+        reports["insufficient"]["tool_usage_review"]["inventory_complete"] = True
+        page = renderer.render_summary(manifest, reports, synthesis, set())
+        body = page.split('<th scope="col">分项指标</th>', 1)[1].split('<tbody>', 1)[1]
+        self.assertTrue(body.startswith('<tr><td>设计遵循率</td>'))
+        positions = [body.index(label) for label in ("设计遵循率", "设计遵循通过案例占比", "流程完成率", "结束时机正确率", 'id="tool-drilldown-toggle"')]
+        self.assertEqual(positions, sorted(positions))
+        self.assertIn('type="button" aria-expanded="false" aria-controls="tool-drilldown-row"', page)
+        self.assertIn('<tr id="tool-drilldown-row" hidden><td colspan="5">', page)
+        self.assertIn('<details id="metadata-details" class="metadata-details">', page)
+        self.assertEqual(page.count('<th scope="col">工具名</th>'), 1)
+        self.assertEqual(page.count('<th scope="col">调用清单</th>'), 1)
+        for label in ("工具名", "调用总数", "正确", "错误", "无法判断", "使用正确率"):
+            self.assertIn('<th scope="col">' + label + '</th>', page)
+        detail = renderer.render_case(manifest, reports["pass"])
+        self.assertIn("工具遵循率=1/1 · 100.0%", detail)
+        self.assertNotIn("工具正确使用率", detail)
+        self.assertIn("计算方式：正确实际调用数", detail)
+        self.assertIn("调用时间线", detail)
+
+    def test_tool_grouping_sums_to_calls_and_never_uses_handwritten_totals(self):
+        manifest, reports, synthesis = self.call_fixture([["pass", "unknown"], ["fail", "pass", "pass"]])
+        reports["pass"]["tool_usage_review"]["calls"][0]["tool_name"] = "skill_read"
+        reports["fail"]["tool_usage_review"]["calls"][1]["tool_name"] = "skill_read"
+        reports["outside"] = copy.deepcopy(reports["pass"])
+        statistics = renderer.audit_statistics(manifest, reports)
+        expected = [
+            {"tool_name": "skill_read", "total": 2, "pass": 2, "fail": 0, "unknown": 0, "rate": "100.0%"},
+            {"tool_name": "synthetic-tool", "total": 3, "pass": 1, "fail": 1, "unknown": 1, "rate": "33.3%"},
+        ]
+        self.assertEqual(statistics["tool_adherence_by_tool"], expected)
+        for key in ("total", "pass", "fail", "unknown"):
+            self.assertEqual(sum(item[key] for item in expected), statistics["tool_adherence"][key])
+        self.assertEqual(statistics["tool_adherence"]["rate"], "60.0%")
+        page = renderer.render_summary(manifest, reports, synthesis, set(), statistics)
+        self.assertIn('<td>skill_read</td><td>2</td><td>2</td><td>0</td><td>0</td><td>100.0%</td>', page)
+        self.assertEqual(renderer.tool_usage_stats(manifest, reports), renderer.tool_adherence_stats(manifest, reports))
+        reports["fail"]["tool_usage_review"]["calls"][0]["status"] = "pass"
+        self.assertEqual(renderer.audit_statistics(manifest, reports)["tool_adherence"]["pass"], 4)
+
+    def test_summary_machine_statistics_keeps_axes_and_checks_independent(self):
+        self.cases()
+        result = self.summary()
+        expected = renderer.audit_statistics(self.manifest, self.reports)
+        self.assertEqual(result, dict(expected, out=str(self.root / "output/index.html")))
+        self.assertIsNone(result["tool_adherence"])
+        self.assertNotIn("tool_usage", result)
+        self.assertEqual(result["statistics_schema_version"], 2)
+        self.assertEqual(result["counts"]["fail"], 1)
+        self.assertEqual(result["design_adherence"]["total"], 20)
+        self.assertEqual(result["case_axes"]["design"]["total"], 4)
+        self.assertEqual(sum(result["counts"].values()), result["total"])
+        self.assertEqual(result["design_adherence"]["unknown"], 1)
+        self.assertIn("checks", result["metric_definitions"]["design_adherence"])
+        self.assertIn("历史 v1/v2", result["metric_definitions"]["tool_adherence"])
+
+    def test_controls_expand_collapse_and_theme_without_removed_filters(self):
+        source = (renderer.TEMPLATES / "controls.js").read_text()
+        for removed in ("case-search", "case-status", "case-table", "visible-count", "filter", "innerHTML"):
+            self.assertNotIn(removed, source)
+        # 浏览器原生 button 提供 Enter/Space；这里直接执行相同 click 处理，核对 aria 和 hidden 同步。
+        setup = r'''
+const assert = require("node:assert/strict");
+const nodes = {};
+for (const id of ["theme-choice", "tool-drilldown-toggle", "tool-drilldown-row", "tool-drilldown-label"]) {
+  nodes[id] = {events: {}, attrs: {}, hidden: id === "tool-drilldown-row",
+    addEventListener(name, action) {this.events[name] = action;},
+    getAttribute(name) {return this.attrs[name] ?? null;},
+    setAttribute(name, value) {this.attrs[name] = value;}};
+}
+const root = {attrs: {}, setAttribute(key, value) {this.attrs[key] = value;}, removeAttribute(key) {delete this.attrs[key];}};
+global.document = {getElementById(id) {return nodes[id] ?? null;}, documentElement: root};
+'''
+        checks = r'''
+const button = nodes["tool-drilldown-toggle"], row = nodes["tool-drilldown-row"], label = nodes["tool-drilldown-label"];
+button.events.click();
+assert.equal(button.attrs["aria-expanded"], "true"); assert.equal(row.hidden, false); assert.equal(label.textContent, "收起 ▴");
+button.events.click();
+assert.equal(button.attrs["aria-expanded"], "false"); assert.equal(row.hidden, true); assert.equal(label.textContent, "展开 ▾");
+for (const theme of ["dark", "light", "system"]) {
+  nodes["theme-choice"].value = theme; nodes["theme-choice"].events.change();
+  assert.equal(root.attrs["data-theme"], theme === "system" ? undefined : theme);
+}
+process.stdout.write("ok");
+'''
+        try:
+            result = subprocess.run(["node", "-e", setup + source + checks], capture_output=True, text=True, check=False)
+        except FileNotFoundError:
+            self.skipTest("Node.js 不可用，浏览器交互验收另行覆盖")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "ok")
+        # 详情页没有下钻控件，主题仍工作且初始化不抛错。
+        result = subprocess.run(["node", "-e", setup + 'delete nodes["tool-drilldown-toggle"];\n' + source], capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_report_styles_keep_scroll_in_table_and_both_themes(self):
+        style = (renderer.TEMPLATES / "style.css").read_text()
+        self.assertIn('padding-left: max(16px, env(safe-area-inset-left, 0px))', style)
+        self.assertIn('padding-right: max(16px, env(safe-area-inset-right, 0px))', style)
+        self.assertIn('.table-scroll { max-width: 100%; overflow-x: auto;', style)
+        self.assertIn(':root:not([data-theme="light"])', style)
+        self.assertIn(':root[data-theme="dark"]', style)
+        self.assertIn(':focus-visible', style)
+        self.assertIn('background: var(--bg); color: var(--fg)', style)
+        self.assertNotIn('.filters', style)
 
     def test_cli_demo_deterministic_private_synthetic(self):
         dest = self.root / "demo"
@@ -796,11 +947,14 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         output = json.loads(result.stdout)
         self.assertEqual(output["counts"]["pass"], 1)
-        self.assertEqual(output["tool_usage"], {"total": 5, "pass": 3, "fail": 1, "unknown": 1, "incomplete_cases": 1, "inventory_complete": False})
+        self.assertEqual(output["tool_adherence"], {"total": 5, "pass": 3, "fail": 1, "unknown": 1, "incomplete_cases": 1, "inventory_complete": False, "rate": "60.0%"})
+        self.assertNotIn("tool_usage", output)
         self.assertEqual(renderer.load_json(dest / "manifest.json")["schema_version"], 3)
         demo_manifest = renderer.load_json(dest / "manifest.json")
         demo_reports = {case["case_key"]: renderer.load_json(dest / "reports" / (case["case_key"] + ".json")) for case in demo_manifest["cases"]}
-        self.assertEqual(output["tool_adherence"], renderer.tool_adherence_stats(demo_manifest, demo_reports))
+        expected_design = renderer.design_adherence_stats(demo_manifest, demo_reports)
+        self.assertEqual(output["design_adherence"], dict(expected_design, rate=renderer.ratio(expected_design["pass"], expected_design["total"])))
+        self.assertEqual(output["tool_adherence"], dict(renderer.tool_adherence_stats(demo_manifest, demo_reports), rate="60.0%"))
         self.assertIn("合成", (dest / "index.html").read_text())
         for file in dest.rglob("*.html"):
             parser = Links()

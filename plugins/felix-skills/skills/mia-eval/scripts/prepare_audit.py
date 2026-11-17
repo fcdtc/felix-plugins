@@ -11,6 +11,7 @@ import ast
 import hashlib
 import json
 import os
+import re
 import stat
 from datetime import datetime, timezone
 from pathlib import Path
@@ -113,6 +114,122 @@ def parse_json(value):
         raise PrepareError("不合法 JSON: " + str(exc)) from exc
 
 
+def json_type(value):
+    if value is None:
+        return "null"
+    if type(value) is bool:
+        return "boolean"
+    if isinstance(value, dict):
+        return "object"
+    if isinstance(value, list):
+        return "array"
+    if isinstance(value, str):
+        return "string"
+    return "number"
+
+
+def pointer_token(value):
+    return str(value).replace("~", "~0").replace("/", "~1")
+
+
+def resolve_pointer(value, pointer):
+    """严格 RFC6901（非 URI fragment），数组下标遵循无前导零的 ABNF。"""
+    require(isinstance(pointer, str) and (pointer == "" or pointer.startswith("/")),
+            "定位必须是 RFC6901 JSON Pointer: " + repr(pointer))
+    if not pointer:
+        return value
+    for encoded in pointer[1:].split("/"):
+        require(re.search(r"~(?![01])", encoded) is None, "JSON Pointer 含无效 ~ 转义")
+        token = encoded.replace("~1", "/").replace("~0", "~")
+        if isinstance(value, dict):
+            require(token in value, "JSON Pointer 对象字段不存在: " + token)
+            value = value[token]
+        elif isinstance(value, list):
+            require(re.fullmatch(r"0|[1-9][0-9]*", token) is not None,
+                    "JSON Pointer 数组下标必须是非负整数且无前导零: " + token)
+            # 超长下标必定越界，无需转换成任意长度整数。
+            require(len(token) <= len(str(len(value))), "JSON Pointer 数组下标越界: " + token)
+            position = int(token)
+            require(position < len(value), "JSON Pointer 数组下标越界: " + token)
+            value = value[position]
+        else:
+            raise PrepareError("JSON Pointer 不能继续遍历 " + json_type(value))
+    return value
+
+
+def locator_chain(locator):
+    if isinstance(locator, str):
+        locator = parse_json(locator) if locator.startswith("[") else [locator]
+    require(isinstance(locator, list) and bool(locator) and all(isinstance(p, str) for p in locator),
+            "locator 必须是 JSON Pointer 或非空 JSON Pointer 字符串数组")
+    return locator
+
+
+def resolve_locator(value, locator):
+    """仅显式链边界解码 JSON 字符串，不把自然文本自动当对象。"""
+    for position, pointer in enumerate(locator_chain(locator)):
+        if position:
+            require(isinstance(value, str), "JSON Pointer 链边界必须是 JSON 字符串")
+            value = parse_json(value)
+        value = resolve_pointer(value, pointer)
+    return value
+
+
+def citation_source(index, source):
+    require(isinstance(source, str), "证据 source 必须是字符串")
+    require(isinstance(index, dict), "packet 必须是对象")
+    sources = index.get("sources")
+    require(isinstance(sources, dict), "packet 缺 sources 对象")
+    for key, descriptor in sources.items():
+        require(isinstance(key, str) and isinstance(descriptor, dict) and isinstance(descriptor.get("path"), str),
+                "packet source 必须有字符串 key/path")
+        digest = descriptor.get("sha256")
+        require(isinstance(digest, str) and re.fullmatch(r"[0-9a-f]{64}", digest) is not None,
+                "packet source 缺合法 SHA-256: " + key)
+    if source in sources:
+        return source
+    matches = [key for key, row in sources.items() if source in (row["path"], Path(row["path"]).name)]
+    require(len(matches) < 2, "证据 source 不唯一，请使用 packet source ID 或完整物理路径: " + source)
+    return matches[0] if matches else None
+
+
+def verify_report_citations(report, packet_index):
+    """校验 packet 已注册来源；未知来源不读取，以 unchecked 明示未覆盖。"""
+    require(isinstance(report, dict) and isinstance(report.get("evidence_index"), list), "报告缺 evidence_index")
+    checked, unchecked, loaded = [], [], {}
+    for evidence in report["evidence_index"]:
+        require(isinstance(evidence, dict) and all(isinstance(evidence.get(k), str) for k in ("id", "source", "locator")),
+                "证据必须有 id/source/locator 字符串")
+        key = citation_source(packet_index, evidence["source"])
+        if key is None:
+            unchecked.append({"id": evidence["id"], "source": evidence["source"]})
+            continue
+        if key not in loaded:
+            descriptor = packet_index["sources"][key]
+            body = read_bytes(descriptor["path"])
+            require(sha256(body) == descriptor.get("sha256"), "证据来源哈希变化: " + key)
+            value = parse_json(body)
+            if "root_type" in descriptor:
+                require(json_type(value) == descriptor["root_type"], "证据来源根类型不一致: " + key)
+            loaded[key] = value
+        try:
+            value = resolve_locator(loaded[key], evidence["locator"])
+        except PrepareError as exc:
+            raise PrepareError("证据 " + evidence["id"] + " 定位无效: " + str(exc)) from exc
+        checked.append({"id": evidence["id"], "source": key, "locator": locator_chain(evidence["locator"]),
+                        "source_sha256": packet_index["sources"][key]["sha256"],
+                        "value_sha256": value_hash(value), "type": json_type(value)})
+    return {"checked_count": len(checked), "checked": checked, "unchecked": unchecked,
+            "complete": not unchecked}
+
+
+def citations_command(args):
+    require(sys.flags.isolated, "解析下载 JSON 必须使用 python -I")
+    report = parse_json(read_bytes(args.report))
+    index = parse_json(read_bytes(args.packet))
+    return verify_report_citations(report, index)
+
+
 def resource_files(root):
     """仅固定技能维护资源；templates 的目录树也完整保留。"""
     root = physical_path(root)
@@ -203,7 +320,13 @@ def report_contract(renderer, source):
             "逐条核对 packet 的 index.json 与 tool-calls.json 全部调用索引，核对完整轮次，calls 无缺项；主线程再按复合 ID 核对集合，不只核对数量。",
             "inventory_complete 仅在全部轮次及调用索引核对无缺项时为 true；清单不完整时仅列已知调用下限，不伪造未知总量。",
             "metrics.tool_calls 为 null 或非负整数；inventory_complete=true 时非 null 值必须等于 calls 长度，不完整时不得小于已知 calls 长度。",
-            "工具正确使用率=全部选定 case 的 calls pass 数/全部 calls 数，按总调用加权，不取案例平均；清单不完整只显示已知占比，零调用 N/A。",
+            "工具遵循率=全部选定 case 的 calls pass 数/全部 calls 数，按总调用加权，不取案例平均；清单不完整只显示已知占比，零调用 N/A。",
+            "设计遵循率=全部 checks 的 pass 条数/全部 checks 条数，不筛检查 ID 或类型、不平均各 case；零 checks 为 N/A。设计遵循通过案例占比单独按 case 统计。",
+            "先读 baseline/audit-brief.json：design_summary 指向历史职责；focus/exclusions/scope_rules 限定本次可检查内容。引用领域原规则前核对适用范围，显式排除的细则不扣分。",
+            "新增主动事项依据实际独立目的、额外内容和生成/push 参数；任务介绍、原交付说明及通知规则允许的有据关怀按原通知职责判断，思考标签不是新增或发送证据。",
+            "逐项账包含适用查询、安排评估、生产及通知阶段；必要分页仍可续且无同范围完整替代时，execution 与 completion_gate 分别引用未收尾证据，不推测隐藏页具体遗漏。",
+            "packet input-index.json 提供原输入及 mapped 输入的根类型、源哈希和规范定位；直接引用自动 locator（RFC6901 根为空字符串，嵌套容器用 JSON 编码 Pointer 链），用 verify-citations --packet INDEX --report REPORT 或 case --packet INDEX 解析并核验已注册来源。未经注册的来源保留 unchecked，不冒充全量证据定位已验证。",
+            "进度或报告交付不是宿主 completed；首条 case_key+ordinal 核对后 started，report-ready 仍占槽，宿主完成通知后才 finished 并持续补位。只有必要人工输入阻塞全部剩余工作时暂停。",
             "逐调用 fail 不自动改变整体分类，原 checks/findings/struggles 仍按审计标准决定；tool_usage 同名 check 为工具使用案例检查，不是调用率。",
             "业务调用判定读取 skill/references/tool-call-scoring.md；HTML 仅展示调用顺序、工具名、判定、原因，不展示调用敏感 ID 或证据原文。",
             "schema_version 与 manifest 一致；case_key 必须属于 manifest。身份未知用空字符串，不能认领目标身份。",
@@ -304,7 +427,7 @@ class Node:
         self.value, self.source, self.locator = value, source, locator or [""]
 
     def child(self, key):
-        escaped = str(key).replace("~", "~0").replace("/", "~1")
+        escaped = pointer_token(key)
         locator = self.locator[:-1] + [self.locator[-1] + "/" + escaped]
         return Node(self.value[key], self.source, locator)
 
@@ -598,18 +721,22 @@ def packet_command(args):
     require(sys.flags.isolated, "解析下载 JSON 必须使用 python -I")
     history_path, out = physical_path(args.history), physical_path(args.out)
     debug_paths = [physical_path(path) for path in (args.debug or [])]
+    input_paths = [physical_path(path) for path in getattr(args, "input", [])]
     require(not out.exists(), "packet 必须使用尚不存在的独立目录")
-    require(out != history_path.parent and all(out not in path.parents for path in [history_path] + debug_paths),
+    require(out != history_path.parent and all(out not in path.parents for path in [history_path] + debug_paths + input_paths),
             "派生目录不能包含输入文件")
     sources, roots, input_bytes = {}, {}, {}
-    for name, path in [("history", history_path)] + [("debug-%04d" % i, p) for i, p in enumerate(debug_paths, 1)]:
+    for name, path in [("history", history_path)] + [("debug-%04d" % i, p) for i, p in enumerate(debug_paths, 1)] + [("input-%04d" % i, p) for i, p in enumerate(input_paths, 1)]:
         body = read_bytes(path)
         value = parse_json(body)
-        require(isinstance(value, dict), "官方 JSON 根必须是对象: " + str(path))
+        is_input = name.startswith("input-")
+        require(is_input or isinstance(value, dict), "官方 JSON 根必须是对象: " + str(path))
         root = Node(value, name)
         roots[name] = root
         input_bytes[path] = body
-        sources[name] = {"path": str(path), "sha256": sha256(body), "status_info": response_status(root)}
+        sources[name] = {"path": str(path), "sha256": sha256(body), "root_type": json_type(value),
+                         "root_locator": [""], "kind": "input" if is_input else "runtime",
+                         "status_info": {"state": "not_applicable", "raw": []} if is_input else response_status(root)}
     history = first_body(roots["history"])
     issues, gaps, rejected = [], [], []
     rows = history.value.get("messages")
@@ -697,7 +824,7 @@ def packet_command(args):
         for entry in messages:
             entry["missing_fields"].append("identity.conflict")
     for name, root in roots.items():
-        if name == "history":
+        if name == "history" or name.startswith("input-"):
             continue
         body = first_body(root)
         candidates = evidence_nodes(body, issues)
@@ -842,9 +969,26 @@ def packet_command(args):
              "missing_fields": sorted(set(gaps) | {field for entry in messages for field in entry["missing_fields"]}),
              "global_missing_fields": sorted(set(gaps)), "issues": issues, "rejected_debug": rejected,
              "files": {"tool_calls": "tool-calls.json", "timeline": "timeline-index.json", "usage": "usage.json",
-                       "thinking": "thinking-index.json", "prompts": "prompt-index.json"},
+                       "thinking": "thinking-index.json", "prompts": "prompt-index.json", "inputs": "input-index.json"},
              "note": "仅证据覆盖索引，不是 Agent 通过判定；未知原始 enum 不映射成成功或失败。"}
-    for name, value in (("tool-calls.json", tools), ("timeline-index.json", timeline),
+    input_index = []
+    for name, root in roots.items():
+        if not name.startswith("input-"):
+            continue
+        # 提供根及顶层输入字段定位，数组还提供每个元素的字段；正文仍从原文件完整读取。
+        nodes = [root]
+        if isinstance(root.value, dict):
+            nodes.extend(root.child(key) for key in root.value)
+        elif isinstance(root.value, list):
+            for position, value in enumerate(root.value):
+                element = root.child(position)
+                nodes.append(element)
+                if isinstance(value, dict):
+                    nodes.extend(element.child(key) for key in value)
+        input_index.append({"source": name, "path": sources[name]["path"], "sha256": sources[name]["sha256"],
+                            "root_type": sources[name]["root_type"],
+                            "locations": [dict(described(node), report_locator=json.dumps(node.locator, ensure_ascii=False)) for node in nodes]})
+    for name, value in (("input-index.json", input_index), ("tool-calls.json", tools), ("timeline-index.json", timeline),
                         ("usage.json", {"aggregation": "none; one original usage per message", "messages": usages}),
                         ("thinking-index.json", thinking), ("prompt-index.json", prompts), ("index.json", index)):
         save_json(out / name, value)
@@ -862,10 +1006,14 @@ def main(argv=None):
     packet = commands.add_parser("packet", help="纯本地派生一个 case 的 history/debug 索引")
     packet.add_argument("--history", required=True)
     packet.add_argument("--debug", action="append", default=[])
+    packet.add_argument("--input", action="append", default=[], help="原始输入或 mapped 输入 JSON；可重复，保留根类型与自动定位")
     packet.add_argument("--out", required=True)
+    citations = commands.add_parser("verify-citations", help="核验报告中 packet 已注册来源的哈希与 JSON Pointer")
+    citations.add_argument("--packet", required=True, help="packet 的 index.json 物理绝对路径")
+    citations.add_argument("--report", required=True)
     args = parser.parse_args(argv)
     try:
-        result = {"freeze": freeze_command, "packet": packet_command}[args.command](args)
+        result = {"freeze": freeze_command, "packet": packet_command, "verify-citations": citations_command}[args.command](args)
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))
         return 0
     except (PrepareError, OSError, UnicodeError, RecursionError) as exc:

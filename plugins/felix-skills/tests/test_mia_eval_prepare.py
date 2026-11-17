@@ -87,7 +87,7 @@ class PrepareTests(unittest.TestCase):
         command = [sys.executable] + (["-I"] if isolated else []) + ["-B", str(SCRIPT)] + list(map(str, args))
         return subprocess.run(command, capture_output=True, text=True, cwd=cwd, check=False)
 
-    def packet(self, value, debugs=(), name="packet"):
+    def packet(self, value, debugs=(), name="packet", inputs=()):
         path = self.dump(name + "-input/history.json", value)
         debug_paths = [self.dump(name + "-input/debug-%d.json" % i, d) for i, d in enumerate(debugs)]
         original = {p: p.read_bytes() for p in [path] + debug_paths}
@@ -95,6 +95,8 @@ class PrepareTests(unittest.TestCase):
         args = ["packet", "--history", path, "--out", out]
         for debug in debug_paths:
             args.extend(["--debug", debug])
+        for input_path in inputs:
+            args.extend(["--input", input_path])
         result = self.cli(*args)
         self.assertEqual(result.returncode, 0, result.stderr)
         for p, body in original.items():
@@ -111,15 +113,107 @@ class PrepareTests(unittest.TestCase):
 
     def pointer(self, index, ref):
         value = json.loads(Path(index["sources"][ref["source"]]["path"]).read_text())
-        for pointer in ref["locator"]:
-            if isinstance(value, str):
-                value = json.loads(value)
-            if not pointer:
-                continue
-            for key in pointer[1:].split("/"):
-                key = key.replace("~1", "/").replace("~0", "~")
-                value = value[int(key)] if isinstance(value, list) else value[key]
-        return value
+        return prepare.resolve_locator(value, ref["locator"])
+
+    def test_json_pointer_handles_rfc6901_escaping_arrays_and_empty_keys(self):
+        value = {"a/b": {"~key": [{"": 17}]}, "~1": 23, "": 42}
+        self.assertEqual(prepare.resolve_pointer(value, "/a~1b/~0key/0/"), 17)
+        self.assertEqual(prepare.resolve_pointer(value, "/~01"), 23)
+        self.assertEqual(prepare.resolve_pointer(value, "/"), 42)
+        self.assertIs(prepare.resolve_pointer(value, ""), value)
+        self.assertEqual(prepare.resolve_pointer({"01": "object-key"}, "/01"), "object-key")
+        for pointer in ("#/a", "a", "/a~2b", "/a/b", "/a~1b/~0key/01", "/a~1b/~0key/-", "/a~1b/~0key/+0", "/a~1b/~0key/١", "/a~1b/~0key/1", "/a~1b/~0key/0//x"):
+            with self.subTest(pointer=pointer), self.assertRaises(prepare.PrepareError):
+                prepare.resolve_pointer(value, pointer)
+
+    def test_locator_chain_decodes_only_explicit_string_boundaries(self):
+        value = {"raw_events_json": '[{"payload":{"a/b":7}}]'}
+        chain = ["/raw_events_json", "/0/payload/a~1b"]
+        self.assertEqual(prepare.resolve_locator(value, chain), 7)
+        self.assertEqual(prepare.resolve_locator(value, json.dumps(chain)), 7)
+        self.assertEqual(prepare.resolve_locator(value, "/raw_events_json"), value["raw_events_json"])
+        for invalid in ([], ["/raw_events_json", 3], ["/raw_events_json", "/01"], ["", "/raw_events_json"], "[not-json", "/raw_events_json/0"):
+            with self.subTest(locator=invalid), self.assertRaises(prepare.PrepareError):
+                prepare.resolve_locator(value, invalid)
+
+    def test_packet_inputs_supply_root_type_source_hash_and_canonical_pointers(self):
+        source = self.dump("original/input.json", [{"user_input": "匿名请求", "a/b": {"~key": "匿名"}}])
+        mapped = self.dump("mapped/mapped-input.json", {"user_input": "匿名请求"})
+        original = source.read_bytes()
+        out, index = self.packet(history(), inputs=[source, mapped])
+        self.assertEqual(source.read_bytes(), original)
+        self.assertEqual(index["sources"]["history"]["root_type"], "object")
+        self.assertEqual(index["sources"]["input-0001"]["root_type"], "array")
+        self.assertEqual(index["sources"]["input-0002"]["root_type"], "object")
+        inputs = self.load(out, "input-index.json")
+        self.assertEqual([i["root_type"] for i in inputs], ["array", "object"])
+        pointers = [item["locator"] for item in inputs[0]["locations"]]
+        self.assertIn(["/0/user_input"], pointers)
+        self.assertIn(["/0/a~1b"], pointers)
+        self.assertIn(["/user_input"], [item["locator"] for item in inputs[1]["locations"]])
+        for descriptor in inputs:
+            self.assertEqual(descriptor["sha256"], hashlib.sha256(Path(descriptor["path"]).read_bytes()).hexdigest())
+            for item in descriptor["locations"]:
+                self.assertEqual(json.loads(item["report_locator"]), item["locator"])
+                self.assertEqual(prepare.value_hash(self.pointer(index, item)), item["sha256"])
+
+    def test_verify_citations_resolves_known_inputs_and_rejects_wrong_root_paths(self):
+        source = self.dump("original/input.json", [{"user_input": "匿名请求"}])
+        mapped = self.dump("mapped/mapped-input.json", {"user_input": "匿名请求"})
+        out, index = self.packet(history(), inputs=[source, mapped])
+        report = {"evidence_index": [{"id": "original", "source": "input.json", "locator": "/0/user_input"},
+                                      {"id": "mapped", "source": str(mapped), "locator": '["/user_input"]'}]}
+        report_path = self.dump("report.json", report)
+        result = self.cli("verify-citations", "--packet", out / "index.json", "--report", report_path)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        validation = json.loads(result.stdout)
+        self.assertEqual(validation["checked_count"], 2)
+        self.assertTrue(validation["complete"])
+        self.assertNotIn("匿名请求", result.stdout)
+        report["evidence_index"][0]["locator"] = "/user_input"
+        result = self.cli("verify-citations", "--packet", out / "index.json", "--report", self.dump("wrong-report.json", report))
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("original 定位无效", result.stderr)
+        report["evidence_index"][0]["locator"] = "/0/user_input"
+        source.write_text('[{"user_input":"来源被改"}]')
+        with self.assertRaisesRegex(prepare.PrepareError, "哈希变化"):
+            prepare.verify_report_citations(report, index)
+
+    def test_verify_nested_event_citations_and_reports_unregistered_sources(self):
+        out, index = self.packet(history())
+        ref = self.load(out, "timeline-index.json")[0]["sources"][0]
+        report = {"evidence_index": [{"id": "event", "source": ref["source"], "locator": json.dumps(ref["locator"])},
+                                      {"id": "baseline", "source": "unregistered-baseline.md", "locator": "L1"}]}
+        result = prepare.verify_report_citations(report, index)
+        self.assertEqual(result["checked_count"], 1)
+        self.assertEqual(result["unchecked"], [{"id": "baseline", "source": "unregistered-baseline.md"}])
+        self.assertFalse(result["complete"])
+        # 只有存在的 evidence_id 不够：嵌套字段路径也实际解析。
+        report["evidence_index"][0]["locator"] = json.dumps(ref["locator"][:-1] + ["/missing"])
+        with self.assertRaisesRegex(prepare.PrepareError, "event 定位无效"):
+            prepare.verify_report_citations(report, index)
+
+    def test_citation_cli_rejects_malformed_packet_descriptors_without_traceback(self):
+        report_path = self.dump("report.json", {"evidence_index": [{"id": "source", "source": "input", "locator": '[""]'}]})
+        for position, value in enumerate(([], {}, {"sources": {"input": []}}, {"sources": {"input": {"path": 7}}}, {"sources": {"input": {"path": "/missing", "sha256": "bad"}}})):
+            with self.subTest(packet=value):
+                packet_path = self.dump("bad-packet-%d.json" % position, value)
+                result = self.cli("verify-citations", "--packet", packet_path, "--report", report_path)
+                self.assertEqual(result.returncode, 2)
+                self.assertNotIn("Traceback", result.stderr)
+
+    def test_input_citation_basename_ambiguity_and_symlinks_are_rejected(self):
+        first = self.dump("first/input.json", [{}])
+        second = self.dump("second/input.json", [{}])
+        _, index = self.packet(history(), inputs=[first, second])
+        evidence = {"evidence_index": [{"id": "input", "source": "input.json", "locator": ""}]}
+        with self.assertRaisesRegex(prepare.PrepareError, "不唯一"):
+            prepare.verify_report_citations(evidence, index)
+        evidence["evidence_index"][0]["source"] = "input-0001"
+        first.unlink()
+        first.symlink_to(second)
+        with self.assertRaisesRegex(prepare.PrepareError, "符号链接"):
+            prepare.verify_report_citations(evidence, index)
 
     def test_freeze_keeps_exact_resources_hashes_example_and_contract(self):
         skill = self.skill_copy()
@@ -169,8 +263,9 @@ class PrepareTests(unittest.TestCase):
         self.assertTrue(report["tool_usage_review"]["inventory_complete"])
         self.assertEqual(report["metrics"]["tool_calls"], len(report["tool_usage_review"]["calls"]))
         rules = "\n".join(contract["rules"])
-        for rule in ("全部调用索引", "calls 无缺项", "主线程再按复合 ID 核对集合", "初次错误和修正重试分别记一次", "修正不覆盖原 fail", "零调用 N/A", "tool-call-scoring.md"):
+        for rule in ("全部调用索引", "calls 无缺项", "主线程再按复合 ID 核对集合", "初次错误和修正重试分别记一次", "修正不覆盖原 fail", "零调用 N/A", "tool-call-scoring.md", "工具遵循率=", "设计遵循率=", "设计遵循通过案例占比", "audit-brief.json", "历史职责", "focus/exclusions/scope_rules", "实际独立目的", "思考标签不是", "必要分页", "execution 与 completion_gate", "verify-citations", "report-ready 仍占槽"):
             self.assertIn(rule, rules)
+        self.assertNotIn("工具正确使用率=", rules)
         scoring = next(e for e in snapshot["files"] if e["path"] == "skill/references/tool-call-scoring.md")
         self.assertEqual(scoring["sha256"], hashlib.sha256((skill / "references/tool-call-scoring.md").read_bytes()).hexdigest())
         self.assertTrue(all("demo_data(version=3)" in e["derived_from"] for e in snapshot["files"] if e["path"] in ("worker-report-example.json", "report-contract.json")))
@@ -179,15 +274,31 @@ class PrepareTests(unittest.TestCase):
         self.assertEqual((runtime / "skill/templates/nested/fixture.bin").read_bytes(), b"\x00anonymous\xff")
         if "axis_examples" in contract:
             axes = self.load(runtime, contract["axis_examples"])
-            self.assertEqual([e["id"] for e in axes], ["admission-fails-but-closed", "unfinished-item", "rule-prefetch"])
-            self.assertEqual(axes[0]["verdict"]["execution"], "pass")
-            self.assertEqual(axes[0]["check_statuses"]["tool_usage"], "fail")
-            self.assertEqual(axes[0]["check_statuses"]["completion_gate"], "pass")
-            self.assertEqual(axes[1]["check_statuses"]["completion_gate"], "fail")
-            self.assertEqual(axes[2]["classification"], "pass")
-            self.assertEqual([c["status"] for c in axes[0]["tool_usage_review"]["calls"]], ["pass", "fail", "pass"])
-            self.assertEqual([c["tool_name"] for c in axes[0]["tool_usage_review"]["calls"]], ["history_query", "generate", "push"])
-            self.assertEqual([c["status"] for c in axes[2]["tool_usage_review"]["calls"]], ["pass", "pass", "pass"])
+            by_id = {e["id"]: e for e in axes}
+            self.assertEqual(len(by_id), len(axes))
+            self.assertTrue({"admission-fails-but-closed", "unfinished-item", "rule-prefetch"}.issubset(by_id))
+            admission, unfinished, prefetch = [by_id[key] for key in ("admission-fails-but-closed", "unfinished-item", "rule-prefetch")]
+            self.assertEqual(admission["verdict"]["execution"], "pass")
+            self.assertEqual(admission["check_statuses"]["tool_usage"], "fail")
+            self.assertEqual(admission["check_statuses"]["completion_gate"], "pass")
+            self.assertEqual(unfinished["check_statuses"]["completion_gate"], "fail")
+            self.assertEqual(prefetch["classification"], "pass")
+            self.assertEqual([c["status"] for c in admission["tool_usage_review"]["calls"]], ["pass", "fail", "pass"])
+            self.assertEqual([c["tool_name"] for c in admission["tool_usage_review"]["calls"]], ["history_query", "generate", "push"])
+            self.assertEqual([c["status"] for c in prefetch["tool_usage_review"]["calls"]], ["pass", "pass", "pass"])
+            self.assertTrue({"normal-task-care", "independent-proactive-item", "unfinished-required-query", "excluded-domain-detail"}.issubset(by_id))
+            self.assertEqual([c["status"] for c in by_id["unfinished-required-query"]["tool_usage_review"]["calls"]], ["fail", "pass", "pass"])
+            self.assertTrue(by_id["excluded-domain-detail"]["audit_exclusions"])
+            for example in axes:
+                allowed_extra = {"audit_exclusions"} if example["id"] == "excluded-domain-detail" else set()
+                self.assertEqual(set(example), set(admission) | allowed_extra)
+                self.assertEqual(set(example["verdict"]), set(admission["verdict"]))
+                self.assertEqual(set(example["check_statuses"]), set(admission["check_statuses"]))
+                self.assertEqual(set(example["tool_usage_review"]), {"inventory_complete", "calls"})
+                self.assertEqual(type(example["tool_usage_review"]["inventory_complete"]), bool)
+                for call in example["tool_usage_review"]["calls"]:
+                    self.assertEqual(set(call), set(admission["tool_usage_review"]["calls"][0]))
+                    self.assertIn(call["status"], contract["enums"]["tool_usage_review.call.status"])
 
     def test_freeze_rejects_repeat_nonempty_symlinks_and_relative_paths(self):
         skill = self.skill_copy()

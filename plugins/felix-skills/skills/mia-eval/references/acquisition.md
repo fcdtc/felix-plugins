@@ -38,6 +38,8 @@ agent session debug --session-id <SESSION> --message-id <MESSAGE> [--offline]
 ```bash
 python3 -I -B "$FROZEN_SKILL_ROOT/scripts/prepare_audit.py" packet \
   --history "$RUN_DIR/evidence/<case_key>/history.json" \
+  --input "$RUN_DIR/evidence/<case_key>/input.json" \
+  --input "$RUN_DIR/evidence/<case_key>/mapped-input.json" \
   --out "$RUN_DIR/evidence/<case_key>/packet-001"
 ```
 
@@ -45,7 +47,21 @@ python3 -I -B "$FROZEN_SKILL_ROOT/scripts/prepare_audit.py" packet \
 
 worker首先读索引、完整本例输入及全部实际工具请求/回包。调用和终态按事件去重，usage只取可确认的单份快照、不叠加累计值。为v3逐调用审计，按[调用清单契约](tool-call-scoring.md)逐条核对全部消息和tool-calls.json索引，复合ID为(message_id,tool_call_id)，start/end算一次，实际retry另计。已知调用不能遗漏；必要前文/轮次或索引缺失保留inventory_complete=false，未知总量不伪造。思考按条索引及文件按需读取；首个模型Prompt留可引用文件，其余累计message_list只列原始定位、结构和哈希，确需核验该轮时再读取源片段。自然语言和图片引用保持原样，不靠递归JSON解析或摘要裁剪改变语义。
 
-**完成条件：** 本例完整输入、全部真实轮次调用与终态可定位；明确哪些字段已充分、哪些需补查。thinking缺失本身不要求重复debug；必要字段未知不能因精简资料包改成pass。主线程只需覆盖索引，不批量展开所有case的history/debug；完整原规则按适用分支可读取。
+### 输入定位与可解析引用
+
+`--input` 可重复，只有实际存在的本例输入文件才传入。packet 的 `input-index.json` 登记物理源路径、source ID、根类型、SHA-256 和规范 locator；`index.sources` 也给根类型/root_locator。worker 直接复制自动定位：数组原输入的对象通常从 `/0` 开始，mapped 对象的根 locator 是空字符串，不能把两者互换。
+
+普通 JSON 定位采用 RFC6901：空字符串表示根，`~0` 表示波浪号、`~1` 表示斜线；数组索引按真实位置。平台明确 JSON 容器是字符串时，用 JSON 编码的 Pointer 字符串数组表示逐层解析链，不递归猜普通自然语言。来源文件和哈希先核对，再逐层解析定位。
+
+```bash
+python3 -I -B "$FROZEN_SKILL_ROOT/scripts/prepare_audit.py" verify-citations \
+  --packet "$RUN_DIR/evidence/<case_key>/packet-001/index.json" \
+  --report "$RUN_DIR/reports/<case_key>.json"
+```
+
+该校验解析已注册 history/debug/input 的 `evidence_index.source+locator`，不只是核对 evidence_id 存在。未注册的固定基线或其他来源返回 unchecked，主线程仍需定点读原引用，不将其当作已验证；源哈希变化、错误根类型或不可解析 Pointer 应修正报告/源登记，不改原输入来配错定位。
+
+**完成条件：** 本例完整输入、全部真实轮次调用与终态可定位；引用根类型和源哈希已核对，已注册定位可解析，未注册引用明确未校验。thinking缺失不要求重复debug，必要字段未知不因精简变pass。主线程读索引和定点片段，不批量展开全量history/debug。
 
 ## URL 能否代替 CSV
 

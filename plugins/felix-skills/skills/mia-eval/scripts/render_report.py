@@ -3,6 +3,7 @@
 import argparse
 import copy
 import html
+import importlib.util
 import ipaddress
 import json
 import math
@@ -173,7 +174,7 @@ def validate_case(value, manifest):
     for evidence in value["evidence_index"]:
         fields(evidence, "id source locator excerpt", "evidence")
         for key, item in evidence.items():
-            text(item, "evidence." + key)
+            text(item, "evidence." + key, empty=key == "locator")
     ids = [e["id"] for e in value["evidence_index"]]
     unique(ids, "evidence id")
 
@@ -320,10 +321,18 @@ def listing(values):
     return "<ul>" + "".join("<li>" + esc(v) + "</li>" for v in values) + "</ul>" if values else paragraph("无")
 
 
-def table(headers, rows, attrs=""):
+def table_row(cells):
+    return "<tr>" + "".join("<td>" + cell + "</td>" for cell in cells) + "</tr>"
+
+
+def table_markup(headers, body, attrs=""):
     return ('<div class="table-scroll"><table' + attrs + '><thead><tr>' +
             "".join("<th scope=\"col\">" + esc(h) + "</th>" for h in headers) +
-            "</tr></thead><tbody>" + "".join("<tr>" + "".join("<td>" + cell + "</td>" for cell in row) + "</tr>" for row in rows) + "</tbody></table></div>")
+            "</tr></thead><tbody>" + body + "</tbody></table></div>")
+
+
+def table(headers, rows, attrs=""):
+    return table_markup(headers, "".join(table_row(row) for row in rows), attrs)
 
 
 def render_template(name, slots):
@@ -346,8 +355,6 @@ def page(name, slots):
 def metadata(manifest):
     target = manifest["target"]
     rows = [(esc("生成时间"), esc(manifest["generated_at"])), (esc("目标 motif / agent / version"), esc(" / ".join(target.values())))]
-    task = ('<a href="' + esc(manifest["task_url"]) + '" target="_blank" rel="noopener noreferrer">评测任务</a>') if manifest["task_url"] else "未提供"
-    rows.append(("评测 MIA 链接", task))
     rows.append(("样本清单范围", esc(manifest["scope_note"])))
     if agent_flow(manifest):
         audit = manifest["audit_scope"]
@@ -367,23 +374,37 @@ def call_counts(calls):
     return dict(total=len(calls), **{key: counts[key] for key in CALL_STATUS_LABELS})
 
 
-def tool_usage_stats(manifest, reports):
-    """只汇总选定 case 已列出的实际调用；缺报告也视为清单不完整。"""
+def call_statistics(manifest, reports):
+    """总调用和逐工具统计共用一次分组；范围外报告不进入统计。"""
     require(manifest["schema_version"] == 3, "逐调用统计仅适用于 schema v3")
-    counts = Counter()
+    grouped = {}
     incomplete = 0
     for case in manifest["cases"]:
         report = reports.get(case["case_key"])
         review = report["tool_usage_review"] if report else None
         incomplete += review is None or not review["inventory_complete"]
         if review:
-            counts.update(call_counts(review["calls"]))
-    return dict(total=counts["total"], **{key: counts[key] for key in CALL_STATUS_LABELS},
-                incomplete_cases=incomplete, inventory_complete=incomplete == 0)
+            for call in review["calls"]:
+                grouped.setdefault(call["tool_name"], Counter()).update([call["status"]])
+    by_tool = [dict(tool_name=name, total=sum(counts.values()),
+                    **{key: counts[key] for key in CALL_STATUS_LABELS})
+               for name, counts in sorted(grouped.items())]
+    totals = {key: sum(item[key] for item in by_tool) for key in ("total",) + tuple(CALL_STATUS_LABELS)}
+    return dict(totals, incomplete_cases=incomplete, inventory_complete=incomplete == 0), by_tool
 
 
 def tool_adherence_stats(manifest, reports):
-    """按全部选定案例的检查条目计数；每条pass/fail/unknown各计一次。"""
+    """工具遵循率的分母仅为 v3 实际 calls。"""
+    return call_statistics(manifest, reports)[0]
+
+
+def tool_usage_stats(manifest, reports):
+    """历史 Python 接口兼容别名，始终统计 calls；新代码使用 tool_adherence_stats。"""
+    return tool_adherence_stats(manifest, reports)
+
+
+def design_adherence_stats(manifest, reports):
+    """设计遵循率统计全部 checks；每条 pass/fail/unknown 各计一次。"""
     counts = Counter()
     incomplete = 0
     for case in manifest["cases"]:
@@ -400,7 +421,7 @@ def tool_adherence_stats(manifest, reports):
 
 
 def render_call_stats(counts, complete):
-    label = "工具正确使用率" if complete else "已知调用正确占比（非全量调用率）"
+    label = "工具遵循率" if complete else "已知调用正确占比（非全量工具遵循率）"
     content = paragraph(label + "=" + str(counts["pass"]) + "/" + str(counts["total"]) + " · " + ratio(counts["pass"], counts["total"]))
     content += paragraph("计算方式：正确实际调用数 / 全部实际调用数；按调用总数加权，不取案例平均。无法判断的已知调用保留在分母中；没有调用时为 N/A。")
     return content + table(["调用统计", "数量"], [("总调用数" if complete else "已知调用数（总量下限）", str(counts["total"]))] + [(label, str(counts[key])) for key, label in CALL_STATUS_LABELS.items()])
@@ -412,7 +433,7 @@ def render_call_review(manifest, report):
     review = report["tool_usage_review"]
     content = render_call_stats(call_counts(review["calls"]), review["inventory_complete"])
     if not review["inventory_complete"]:
-        content = '<p class="notice">调用清单不完整：仅统计已知调用，数量是下限，无法声称全量工具正确使用率；未知总量不补写。</p>' + content
+        content = '<p class="notice">调用清单不完整：仅统计已知调用，数量是下限，无法声称全量工具遵循率；未知总量不补写。</p>' + content
     rows = [(str(i), esc(call["tool_name"]), esc(CALL_STATUS_LABELS[call["status"]]), esc(call["reason"])) for i, call in enumerate(review["calls"], 1)]
     content += table(["调用顺序", "工具名", "判定", "原因"], rows) if rows else paragraph("没有已列出的实际调用。" if not review["inventory_complete"] else "本 case 没有实际工具调用。")
     return '<section><h2>逐调用工具使用检查</h2>' + content + '</section>'
@@ -451,71 +472,118 @@ def ratio(count, total):
     return "N/A" if not total else "{:.1f}%".format(100 * count / total)
 
 
-def render_summary(manifest, reports, synthesis, missing_pages):
-    rows = []
+def audit_statistics(manifest, reports, missing_pages=()):
+    """汇总、逐工具下钻及机器输出使用同一份可复算统计。"""
     counts = Counter({key: 0 for key in LABELS})
-    axes = {axis: Counter() for axis in (("design", "execution", "completion_gate") if agent_flow(manifest) else ("design", "execution"))}
-    for case in sorted(manifest["cases"], key=lambda c: c["ordinal"]):
+    labels = (("design", "设计遵循通过案例占比"), ("execution", "流程完成率"),
+              ("completion_gate", "结束时机正确率")) if agent_flow(manifest) else (
+                  ("design", "设计遵循通过案例占比"), ("execution", "保守确认任务完成率"))
+    axes = {axis: Counter() for axis, _ in labels}
+    for case in manifest["cases"]:
         key = case["case_key"]
         report = reports.get(key)
-        status, reasons = assess(manifest, report, key in missing_pages)
-        if report and status == "fail":
-            details = [c["observed"] for c in report["checks"] if c["status"] == "fail"]
-            details += [f["claim"] for f in scoped_findings(manifest, report) if f["confidence"] == "confirmed"]
-            if details:
-                reasons = list(dict.fromkeys(details)) + reasons[1:]
-        elif report and status == "recovered":
-            reasons += [s["description"] for s in report["struggles"]]
+        status, _ = assess(manifest, report, key in missing_pages)
         counts[status] += 1
         for axis in axes:
             axis_status = "unknown"
             if report:
-                relevant = [c for c in report["checks"] if c["id"] == axis]
+                relevant = [check for check in report["checks"] if check["id"] == axis]
                 declared = report["verdict"].get(axis)
-                if declared == "fail" or any(c["status"] == "fail" for c in relevant):
+                if declared == "fail" or any(check["status"] == "fail" for check in relevant):
                     axis_status = "fail"
                 elif agent_flow(manifest):
                     known = (report["identity"] == manifest["target"] and
-                             all(report["coverage"][k] == "complete" for k in ("baseline", "trace")) and
-                             relevant and all(c["status"] == "pass" for c in relevant))
+                             all(report["coverage"][key] == "complete" for key in ("baseline", "trace")) and
+                             relevant and all(check["status"] == "pass" for check in relevant))
                     if known and (declared == "pass" or axis not in report["verdict"]):
                         axis_status = "pass"
                 elif status in ("pass", "recovered") and declared == "pass":
                     axis_status = "pass"
             axes[axis][axis_status] += 1
-        link = '<a href="cases/' + key + '.html">' + esc(case["title"]) + '</a>'
-        rows.append((esc(case["ordinal"]), link + '<br><code>' + key + '</code>', '<span class="status">' + LABELS[status] + '</span>', esc("；".join(reasons)), esc(fmt(report["metrics"]["business_errors"]) if report else "未提供")))
-    n = len(manifest["cases"])
-    stats = '<div class="stats">' + "".join('<div class="stat"><span>' + label + '</span><strong>' + str(value) + '</strong></div>' for label, value in (("全部样本 N", n), ("顺畅通过 P", counts["pass"]), ("失败", counts["fail"]), ("恢复/挣扎", counts["recovered"]), ("证据不足", counts["insufficient"]))) + '</div>'
-    axis_labels = (("design", "设计遵循率"), ("execution", "流程完成率"), ("completion_gate", "结束时机正确率")) if agent_flow(manifest) else (("design", "保守确认设计遵循率"), ("execution", "保守确认任务完成率"))
-    metric_rows = [(label, str(axes[axis]["pass"]) + " / " + str(n), ratio(axes[axis]["pass"], n), str(axes[axis]["fail"]), str(axes[axis]["unknown"])) for axis, label in axis_labels]
-    adherence = tool_adherence_stats(manifest, reports)
-    adherence_label = "工具遵循率" if adherence["checks_complete"] else "已知检查通过占比（非完整工具遵循率）"
-    metric_rows.append((adherence_label, str(adherence["pass"]) + " / " + str(adherence["total"]), ratio(adherence["pass"], adherence["total"]), str(adherence["fail"]), str(adherence["unknown"])))
-    stats += table(["分项指标", "通过 / 全部", "率", "失败", "unknown"], metric_rows)
-    stats += paragraph("工具遵循率计算方式：所有选定案例的 checks 中状态为 pass 的条数 / 所有选定案例的 checks 总条数；包含预期与实际检查中的全部条目，不按检查ID或类型筛选，不平均各案例比例，unknown 留在分母。零条检查为 N/A。")
-    if not adherence["checks_complete"]:
-        stats += paragraph(str(adherence["incomplete_cases"]) + " 个 case 缺报告或必要检查；只展示已知检查条数和通过占比，不补造缺失条目，也不声称完整工具遵循率。")
-    stats += paragraph("各项按自身判定及同名检查分别统计；身份和基线/轨迹完整时，本项通过不因另一项失败而变unknown。流程完成包括规则允许的静默和受阻收尾，不要求后端真实落盘；平台背景发现不参与Agent通过率。" if agent_flow(manifest) else "历史三轴率保留原保守口径：整体失败时未失败轴仍为unknown。旧报告没有按新标准重审，不用于推算Agent流程通过率。")
+    total = len(manifest["cases"])
+
+    def with_rate(value):
+        return dict(value, rate=ratio(value["pass"], value["total"]))
+
+    design = with_rate(design_adherence_stats(manifest, reports))
+    tools, by_tool = None, []
     if manifest["schema_version"] == 3:
-        usage = tool_usage_stats(manifest, reports)
-        stats += '<h3>工具调用正确性</h3>'
-        if not usage["inventory_complete"]:
-            stats += '<p class="notice">' + str(usage["incomplete_cases"]) + ' 个 case 的调用清单不完整（含缺报告）；仅统计已知调用，数量是下限，无法声称全部选定案例的全量工具正确使用率；未知总量不补写。</p>'
-        stats += render_call_stats(usage, usage["inventory_complete"])
-        stats += paragraph("调用清单不完整的 case 数：" + str(usage["incomplete_cases"]) + "。工具正确使用率按实际调用次数计算，工具遵循率按预期与实际检查条数计算；案例检查继续参与整体判定，三者不互相替代。")
-        tool_rows = []
-        grouped = {}
-        for case in sorted(manifest["cases"], key=lambda c: c["ordinal"]):
-            report = reports.get(case["case_key"])
-            review = report["tool_usage_review"] if report else None
-            tool_rows.append((esc(case["ordinal"]), '<a href="cases/' + case["case_key"] + '.html">' + esc(case["title"]) + '</a>', str(len(review["calls"])) if review else "未知", "完整" if review and review["inventory_complete"] else "不完整；仅已知下限"))
-            if review:
-                for call in review["calls"]:
-                    grouped.setdefault(call["tool_name"], []).append(call)
-        if grouped:
-            stats += table(["工具名", "已知调用数", "正确", "错误", "无法判断", "正确 / 已知调用"], [(esc(name), str(counts["total"]), str(counts["pass"]), str(counts["fail"]), str(counts["unknown"]), ratio(counts["pass"], counts["total"])) for name, calls in sorted(grouped.items()) for counts in [call_counts(calls)]])
-        stats += table(["序号", "Case", "已列调用数", "调用清单"], tool_rows)
+        tools, by_tool = call_statistics(manifest, reports)
+        tools, by_tool = with_rate(tools), [with_rate(item) for item in by_tool]
+    return {
+        "statistics_schema_version": 2,
+        "total": total, "counts": {key: counts[key] for key in LABELS},
+        "placeholder_cases": sorted(missing_pages), "smooth_rate": ratio(counts["pass"], total),
+        "design_adherence": design, "tool_adherence": tools, "tool_adherence_by_tool": by_tool,
+        "case_axes": {axis: dict({key: axes[axis][key] for key in ("pass", "fail", "unknown")},
+                                 total=total, rate=ratio(axes[axis]["pass"], total), label=label)
+                      for axis, label in labels},
+        "metric_definitions": {
+            "design_adherence": "全部选定案例的 checks 中 pass 条数 / 全部 checks 条数",
+            "tool_adherence": "全部选定案例的正确实际工具调用数 / 全部实际工具调用数；历史 v1/v2 无 calls 时为 null",
+            "case_axes.design": "设计判定通过案例数 / 全部选定案例数，单独保留案例统计，不称设计遵循率",
+        },
+    }
+
+
+def metric_cells(label, metric):
+    return (label, str(metric["pass"]) + " / " + str(metric["total"]), metric["rate"],
+            str(metric["fail"]), str(metric["unknown"]))
+
+
+def render_metrics(statistics):
+    counts, total = statistics["counts"], statistics["total"]
+    cards = (("全部案例", total), ("顺畅通过", counts["pass"]), ("不通过", counts["fail"]),
+             ("恢复/挣扎", counts["recovered"]), ("证据不足", counts["insufficient"]))
+    content = '<div class="stats">' + "".join(
+        '<div class="stat"><span>' + label + '</span><strong>' + str(value) + '</strong></div>'
+        for label, value in cards) + '</div>'
+    design = statistics["design_adherence"]
+    label = "设计遵循率" if design["checks_complete"] else "已知检查通过占比（非完整设计遵循率）"
+    rows = table_row(metric_cells(esc(label), design))
+    rows += "".join(table_row(metric_cells(esc(metric["label"]), metric))
+                    for metric in statistics["case_axes"].values())
+    tools = statistics["tool_adherence"]
+    if tools is None:
+        rows += table_row(("工具遵循率（历史格式无逐调用数据）", "未提供", "N/A", "未提供", "未提供"))
+    else:
+        label = "工具遵循率" if tools["inventory_complete"] else "已知调用正确占比（非全量工具遵循率）"
+        button = ('<button id="tool-drilldown-toggle" class="metric-drilldown" type="button" '
+                  'aria-expanded="false" aria-controls="tool-drilldown-row">' + esc(label) +
+                  '<span id="tool-drilldown-label">展开 ▾</span></button>')
+        rows += table_row(metric_cells(button, tools))
+        by_tool = statistics["tool_adherence_by_tool"]
+        breakdown = table(["工具名", "调用总数" if tools["inventory_complete"] else "已知调用数（总量下限）",
+                           "正确", "错误", "无法判断", "使用正确率"],
+                          [(esc(item["tool_name"]), str(item["total"]), str(item["pass"]),
+                            str(item["fail"]), str(item["unknown"]), item["rate"]) for item in by_tool])
+        if not by_tool:
+            breakdown = paragraph("没有已列出的实际调用。" if not tools["inventory_complete"] else "选定案例没有实际工具调用。")
+        rows += '<tr id="tool-drilldown-row" hidden><td colspan="5">' + breakdown + '</td></tr>'
+    return content + table_markup(["分项指标", "通过 / 全部", "率", "失败", "unknown"], rows)
+
+
+def render_summary(manifest, reports, synthesis, missing_pages, statistics=None):
+    statistics = audit_statistics(manifest, reports, missing_pages) if statistics is None else statistics
+    meta = metadata(manifest)
+    design = statistics["design_adherence"]
+    if not design["checks_complete"]:
+        meta += paragraph(str(design["incomplete_cases"]) + " 个 case 缺报告或必要检查；只展示已知检查通过占比，不补造缺失条目。")
+    tools = statistics["tool_adherence"]
+    if tools is not None and not tools["inventory_complete"]:
+        meta += paragraph(str(tools["incomplete_cases"]) + " 个 case 的调用清单不完整（含缺报告）；已列调用数是下限，只能声称已知调用正确占比，未知总量不补写。")
+    if tools is None:
+        meta += paragraph("历史 v1/v2 格式没有逐调用判定；工具遵循率为 N/A，不从 checks 或工具错误计数推造 calls。历史案例轴保留原统计口径，本次只是重新渲染，不是重新审计。")
+    task = ('<a href="' + esc(manifest["task_url"]) + '" target="_blank" rel="noopener noreferrer">评测任务</a>') if manifest["task_url"] else "未提供"
+    inventory_rows = []
+    for case in sorted(manifest["cases"], key=lambda item: item["ordinal"]):
+        report = reports.get(case["case_key"])
+        review = report["tool_usage_review"] if report and manifest["schema_version"] == 3 else None
+        note = "历史格式未提供逐调用清单" if manifest["schema_version"] < 3 else (
+            "完整" if review and review["inventory_complete"] else "不完整；仅已知下限")
+        inventory_rows.append((esc(case["ordinal"]), '<a href="cases/' + case["case_key"] + '.html">' +
+                               esc(case["title"]) + '</a>', str(len(review["calls"])) if review else "未知", note))
+    stats = render_metrics(statistics) + table(["序号", "Case", "已列调用数", "调用清单"], inventory_rows)
     issues = []
     for issue in sorted(synthesis["issues"], key=lambda item: (item["priority"], item["id"])):
         examples = []
@@ -525,7 +593,8 @@ def render_summary(manifest, reports, synthesis, missing_pages):
             link = '<a href="cases/' + key + '.html">' + esc(str(case["ordinal"]) + " · " + case["title"]) + '</a>'
             examples.append('<li>' + link + paragraph(example["description"]) + '</li>')
         issues.append('<article><h3>' + esc(issue["priority"] + " · " + issue["title"]) + '</h3>' + paragraph("层级：" + issue["layer"]) + paragraph("问题：" + issue["problem"]) + '<p>具体 case（涉及 ' + str(len(examples)) + ' 个 case）：</p><ul>' + "".join(examples) + '</ul></article>')
-    return page("summary.html", dict(TITLE=esc(manifest["title"]), META=metadata(manifest), RATE=esc("顺畅通过率=" + str(counts["pass"]) + "/" + str(n) + " · " + ratio(counts["pass"], n)), STATS=stats, ISSUES="".join(issues) or paragraph("未发现本次范围内的问题"), CASES=table(["序号", "Case", "重算结论", "判定依据 / 缺口", "业务错误数"], rows, ' id="case-table"')))
+    return page("summary.html", dict(TITLE=esc(manifest["title"]), TASK_LINK=task, META=meta, STATS=stats,
+                                     ISSUES="".join(issues) or paragraph("未发现本次范围内的问题")))
 
 
 def no_symlink(path):
@@ -566,13 +635,31 @@ def save(path, content, overwrite=False):
         stream.write(content)
 
 
+def verify_citations(report, packet):
+    """只从可信同级脚本加载校验器，下载源由其安全读取与哈希核验。"""
+    require(sys.flags.isolated, "引用校验必须使用 python -I")
+    source = Path(__file__).resolve().with_name("prepare_audit.py")
+    no_symlink(source)
+    spec = importlib.util.spec_from_file_location("mia_eval_citation_verifier", source)
+    verifier = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(verifier)
+    try:
+        return verifier.verify_report_citations(report, load_json(packet))
+    except verifier.PrepareError as exc:
+        raise ContractError("引用校验失败：" + str(exc)) from exc
+
+
 def case_command(args):
     manifest = validate_manifest(load_json(args.manifest))
     report = validate_case(load_json(args.report), manifest)
+    verification = verify_citations(report, args.packet) if getattr(args, "packet", None) else None
     out = Path(args.out).absolute()
     require(out.parent.name == "cases" and out.name == report["case_key"] + ".html", "case 输出必须为 OUTPUT/cases/<case_key>.html")
     save(out, render_case(manifest, report), args.overwrite)
-    return {"out": str(out), "status": assess(manifest, report)[0]}
+    result = {"out": str(out), "status": assess(manifest, report)[0]}
+    if verification is not None:
+        result["citation_verification"] = verification
+    return result
 
 
 def summary_command(args):
@@ -608,15 +695,12 @@ def summary_command(args):
             placeholders.append((path, content))
         else:
             require(path.read_text(encoding="utf-8") == render_case(manifest, report), "case HTML 与当前 JSON/manifest/固定模板不一致，请重新渲染: " + key)
-    content = render_summary(manifest, reports, synthesis, missing_pages)
+    statistics = audit_statistics(manifest, reports, missing_pages)
+    content = render_summary(manifest, reports, synthesis, missing_pages, statistics)
     for path, body in placeholders:
         save(path, body, args.overwrite)
     save(out, content, args.overwrite)
-    counts = Counter(assess(manifest, reports.get(c["case_key"]), c["case_key"] in missing_pages)[0] for c in manifest["cases"])
-    result = {"out": str(out), "total": len(manifest["cases"]), "counts": {key: counts[key] for key in LABELS}, "placeholder_cases": sorted(missing_pages), "tool_adherence": tool_adherence_stats(manifest, reports)}
-    if manifest["schema_version"] == 3:
-        result["tool_usage"] = tool_usage_stats(manifest, reports)
-    return result
+    return dict(statistics, out=str(out))
 
 
 def demo_data(version=3):
@@ -711,12 +795,52 @@ def axis_examples(version=3):
             {"message_id": "synthetic-message", "tool_call_id": "synthetic-push", "tool_name": "push", "status": "pass", "reason": "生成成功后发送通知，正确处理回包。", "evidence_refs": ["e-result"]},
         ]}
         prefetch["metrics"]["tool_calls"] = 3
+    care = copy.deepcopy(reports["pass"])
+    care["summary"] = "正常任务通知回应了有据近况并简短鼓励；思考中的 Message 标签不证明新增独立主动事项。"
+    care["timeline"][0].update(action="介绍原任务并回应有据近况", result="只发送原任务的通知，没有额外生成或新增独立帮助")
+    care["evidence_index"][0]["excerpt"] = "合成通知参数：原任务介绍与有据短关怀；没有独立额外目的。思考写过选择Message，但未新增Message。"
+    proactive = copy.deepcopy(admission)
+    proactive["summary"] = "实际生成参数新增了原任务外的独立回顾；没有取得该新增事项所需查重依据。"
+    proactive["timeline"][0].update(action="额外回顾生成和通知", result="额外帮助确已生成并通知；其准入依据仍缺失，正常任务已完成")
+    proactive["evidence_index"][0]["excerpt"] = "合成实际参数：新增独立回顾目的和内容；generate后push成功；生成前未取得必要查重结果。"
+    query = copy.deepcopy(unfinished)
+    query["summary"] = "必要查询返回非空 next_cursor 后未续页就结束；已知生产和通知成功不能证明整个流程收尾。"
+    query["timeline"][0].update(action="查询首分页、生产和通知", result="首分页 next_cursor 非空；已知内容 saved/push success；未继续查询便最终结束")
+    query["evidence_index"][0]["excerpt"] = "合成轨迹：query返回非空next_cursor；generate saved；push success；随后最终结束，没有同范围完整替代查询。"
+    for check in query["checks"]:
+        if check["id"] in ("design", "tool_usage", "execution", "completion_gate"):
+            check.update(status="fail", expected="必要查询完成或有同范围完整替代后收尾",
+                         observed="首分页仍有可执行续页且无完整替代，已知内容交付后直接结束")
+    query["findings"][0].update(id="f-query", claim="必要查询尚未完成就结束", expected="完成必要续页",
+                                 observed="next_cursor非空但无续查或完整替代", impact="查询流程未收尾；不能推断隐藏页必有某个具体遗漏对象")
+    excluded = copy.deepcopy(reports["pass"])
+    excluded["summary"] = "本次排除领域编写细则评分；类型选择、必要指南加载和原素材范围仍逐项核对且符合要求。"
+    excluded["timeline"][0].update(action="加载入口指南并传入原要求和素材", result="类型、指南和素材范围均满足要求；不对排除的逐题教学细则扣分")
+    excluded["evidence_index"][0]["excerpt"] = "合成范围补充排除领域编写细则。实际参数保留原素材和要求；类型及必要指南加载均正确。"
+    if version == 3:
+        care["tool_usage_review"] = {"inventory_complete": True, "calls": [
+            {"message_id": "synthetic-message", "tool_call_id": "synthetic-push", "tool_name": "push", "status": "pass",
+             "reason": "通知只介绍原任务并含版本允许的有据短关怀，没有新增独立主动事项。", "evidence_refs": ["e-result"]}]}
+        query["tool_usage_review"] = {"inventory_complete": True, "calls": [
+            {"message_id": "synthetic-message", "tool_call_id": "synthetic-query", "tool_name": "query", "status": "fail",
+             "reason": "必要查询返回非空 next_cursor，仍可续页且无完整替代，却未按回包完成必要查询范围；遗漏续页不补造另一条调用。", "evidence_refs": ["e-result"]},
+            {"message_id": "synthetic-message", "tool_call_id": "synthetic-generate", "tool_name": "generate", "status": "pass",
+             "reason": "已知任务的生产参数、前提和回包处理正确；独立查询遗漏不抹掉生产成功。", "evidence_refs": ["e-result"]},
+            {"message_id": "synthetic-message", "tool_call_id": "synthetic-push", "tool_name": "push", "status": "pass",
+             "reason": "已知生产成功后正确通知；独立查询未完成不连带改变此调用。", "evidence_refs": ["e-result"]}]}
+        query["metrics"]["tool_calls"] = 3
+        excluded["tool_usage_review"]["calls"][0]["reason"] = "类型、必要指南和素材参数正确；本次明确排除的领域细则不参与该调用扣分。"
+    samples = (("admission-fails-but-closed", admission), ("unfinished-item", unfinished), ("rule-prefetch", prefetch),
+               ("normal-task-care", care), ("independent-proactive-item", proactive),
+               ("unfinished-required-query", query), ("excluded-domain-detail", excluded))
     examples = []
-    for key, item in (("admission-fails-but-closed", admission), ("unfinished-item", unfinished), ("rule-prefetch", prefetch)):
+    for key, item in samples:
         validate_case(item, manifest)
         examples.append({"id": key, "description": item["summary"], "verdict": item["verdict"],
-                         "check_statuses": {c["id"]: c["status"] for c in item["checks"]},
+                         "check_statuses": {check["id"]: check["status"] for check in item["checks"]},
                          "classification": assess(manifest, item)[0]})
+        if key == "excluded-domain-detail":
+            examples[-1]["audit_exclusions"] = ["仅本合成审计排除领域编写细则；类型、指南加载和素材范围仍在本次检查范围"]
         if version == 3:
             examples[-1]["tool_usage_review"] = item["tool_usage_review"]
     return examples
@@ -750,6 +874,7 @@ def main(argv=None):
         command.add_argument("--overwrite", action="store_true")
         if name == "case":
             command.add_argument("--report", required=True)
+            command.add_argument("--packet", help="本例 packet/index.json；解析已注册证据定位与源哈希，未注册来源明示 unchecked")
         else:
             command.add_argument("--reports-dir", required=True)
             command.add_argument("--synthesis", required=True)

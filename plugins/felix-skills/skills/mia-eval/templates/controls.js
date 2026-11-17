@@ -5,24 +5,14 @@
     if (theme.value === "system") document.documentElement.removeAttribute("data-theme");
     else document.documentElement.setAttribute("data-theme", theme.value);
   });
-  const search = document.getElementById("case-search");
-  const status = document.getElementById("case-status");
-  const table = document.getElementById("case-table");
-  if (!table) return;
-  const rows = Array.from(table.querySelectorAll("tbody tr"));
-  const count = document.getElementById("visible-count");
-  const filter = () => {
-    let visible = 0;
-    const needle = search.value.trim().toLocaleLowerCase();
-    rows.forEach(row => {
-      const matchesText = row.textContent.toLocaleLowerCase().includes(needle);
-      const matchesStatus = !status.value || row.cells[2].textContent.trim() === status.value;
-      row.hidden = !(matchesText && matchesStatus);
-      if (!row.hidden) visible += 1;
-    });
-    count.textContent = "显示 " + visible + " / " + rows.length + " 个 case；筛选不改变统计分母。";
-  };
-  search.addEventListener("input", filter);
-  status.addEventListener("change", filter);
-  filter();
+  const button = document.getElementById("tool-drilldown-toggle");
+  const row = document.getElementById("tool-drilldown-row");
+  const label = document.getElementById("tool-drilldown-label");
+  if (!button || !row || !label) return;
+  button.addEventListener("click", () => {
+    const expanded = button.getAttribute("aria-expanded") !== "true";
+    button.setAttribute("aria-expanded", String(expanded));
+    row.hidden = !expanded;
+    label.textContent = expanded ? "收起 ▴" : "展开 ▾";
+  });
 })();
