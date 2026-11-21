@@ -1,12 +1,10 @@
 {
   "schema_version": 1,
   "skills": {
-    "arena": {"support": "claude-and-codex"},
     "ask-matt": {"support": "claude-and-codex"},
     "bro": {"support": "claude-and-codex"},
     "code-review": {"support": "claude-and-codex"},
     "codebase-design": {"support": "claude-and-codex"},
-    "create-verification-skill": {"support": "claude-and-codex"},
     "session-summary": {
       "support": "claude-and-codex",
       "environment_requirements": [
@@ -35,7 +33,6 @@
         "macOS or Linux for centralized workspace file locking"
       ]
     },
-    "maintain-verification-skill": {"support": "claude-and-codex"},
     "mia-design": {
       "support": "claude-and-codex",
       "requires": ["writing-for-agents"],
@@ -69,14 +66,22 @@
       ]
     },
     "prototype": {"support": "claude-and-codex"},
-    "pstack-teach": {"support": "claude-and-codex", "requires": ["how", "why"]},
     "recall": {"support": "claude-and-codex", "requires": ["why"]},
     "refer-to": {"support": "claude-and-codex", "requires": ["how", "unslop"]},
     "research": {"support": "claude-and-codex"},
     "retro": {"support": "claude-and-codex"},
     "setup-matt-pocock-skills": {"support": "claude-and-codex"},
+    "sharpen": {"support": "claude-and-codex"},
     "show-me": {"support": "claude-and-codex"},
     "skill-retro": {"support": "claude-and-codex", "requires": ["writing-for-agents"]},
+    "statechart": {
+      "support": "claude-and-codex",
+      "environment_requirements": [
+        "Node.js 22.18 to 22.x or 23.6 or newer, Bun 1.1.5 or newer, or Deno 2.0 or newer for TypeScript execution; native Windows uses Node.js directly",
+        "mise and network access to install TLC 1.7.4 and Temurin Java 25 on first use, or TLA2TOOLS pointing to tla2tools.jar with JAVA pointing to a Java 11 or newer binary",
+        "Node.js and npm with pele@1.9.0 for SVG rendering, installed outside the repository; network access is required for the initial installation"
+      ]
+    },
     "tdd": {"support": "claude-and-codex"},
     "teach": {"support": "claude-and-codex"},
     "to-questionnaire": {"support": "claude-and-codex"},

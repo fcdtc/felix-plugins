@@ -1,0 +1,5 @@
+interface:
+  display_name: "Statechart"
+  short_description: "Check TLA+ models and draw Mermaid statecharts"
+policy:
+  allow_implicit_invocation: false
